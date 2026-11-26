@@ -1,161 +1,125 @@
-# Technical Specification: Local Audio Transcription, Diarization, Acoustic Analysis & AI Summarization
+# VoiceDigest — Architecture Deep Dive
 
-## 1. Overview & Objectives
-This specification defines a 100% local, privacy-preserving application (Python CLI + native macOS SwiftUI app) for transcribing long-form audio and video recordings (`.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.mp4`, `.mov`, `.mkv`, `.webm`, etc.), identifying individual speakers, extracting paralinguistic (acoustic/prosodic) cues, and generating focused on-device AI summaries.
+## 1. Overview
 
-### Core Design Principles
-* **Zero Cloud / Strict Air-Gap Capability:** Once open-weight models are cached locally, all decoding, inference, speaker repair, summarization, and acoustic extraction run strictly on-device with zero outbound network requests or telemetry (enforced via offline environment variables and a Python socket-level network blocker).
-* **Long-Form Audio Resilience:** Engineered to process $\sim 1\text{--}3\text{-hour}$ recordings reliably without Out-Of-Memory (OOM) failures via sequential model unloading, 8-second windowed SER, and map-reduce LLM summarization.
-* **FOSS-Only Stack:** Built exclusively on Free and Open-Source Software libraries and open-weight models (zero Hugging Face token required for the Apple Silicon MLX + Sherpa-ONNX stack).
-* **Acoustic-First Metadata:** Paralinguistic analysis focuses exclusively on temporal and spectral audio properties (speaking pace, acoustic disfluencies/stammers, vocal stress markers) that would otherwise be lost in plain text, without flagging lexical filler words ("um", "uh").
+**VoiceDigest** is a 100% offline macOS desktop application and Python CLI for transcribing long-form audio/video files and live calls, separating speakers, extracting acoustic/prosodic biomarkers (speaking pace, hesitation blocks, vocal stress), and generating focused on-device AI summaries — with zero outbound network access during inference.
+
+Architecturally, it pairs a native **SwiftUI** front-end and **macOS Core Audio** dual-stream capture engine with a deterministic multi-stage Python ML pipeline (`FFmpeg → MLX-Whisper → Sherpa-ONNX Diarization → Local Qwen2.5-7B Speaker Repair & Map-Reduce Summarization → openSMILE Prosody`). Sequential model unloading keeps peak RAM around **~2–5 GB** on Apple Silicon, air-gap privacy is enforced at the OS socket level, and the entire stack packages into a standalone drag-and-drop `VoiceDigest.dmg` with no external dependencies (no Ollama, no Homebrew, no Hugging Face tokens).
 
 ---
 
-## 2. System Architecture & Pipeline
+## 2. End-to-End Architecture
 
-```text
-+-----------------------+     +-----------------------------------+     +-------------------------+
-|  Input: Audio / Video | --> |  FFmpeg Preprocessor              | --> |  16kHz Mono PCM (.wav)  |
-|  (.m4a, .mp3, .wav,   |     |  (Strip video + configurable      |     |  (~115 MB/hr temp file, |
-|   .mp4, .mov, etc.)   |     |   EBU R128 loudnorm, -16 LUFS)    |     |   auto-cleaned on exit) |
-+-----------------------+     +-----------------------------------+     +-------------------------+
-                                                                                     |
-                    +----------------------------------------------------------------+
-                    |
-                    v
-+---------------------------------------+     +-----------------------------------+
-|  1. ASR & Word Timestamps             |     |  2. Speaker Diarization           |
-|  - mlx-whisper (Apple Silicon GPU)    |     |  - sherpa-onnx (pyannote seg +    |
-|  - or WhisperX (faster-whisper +      |     |    English WeSpeaker VoxCeleb)    |
-|    wav2vec2 forced alignment)         |     |  - or pyannote.audio 3.1+         |
-+---------------------------------------+     +-----------------------------------+
-                    |                                                |
-                    +-----------------------+------------------------+
-                                            |
-                                            v
-                    +-----------------------------------------------+
-                    |  3. Sentence-Boundary Smoothing & Merging     |
-                    |  - Majority-vote speaker per sentence         |
-                    |  - Relabel speaker 1..N by first appearance   |
-                    |  - Optional: Local Qwen 7B Speaker Repair     |
-                    +-----------------------------------------------+
-                                            |
-                    +-----------------------+-----------------------+
-                    | (Optional: --prosody / --summary)             |
-                    v                                               |
-+---------------------------------------+                           |
-|  4. Prosody & Local AI Summary        |                           |
-|  - Pace (WPM / Syllables/s)           |                           |
-|  - Disfluencies (Gaps, Prolongations) |                           |
-|  - Stress (openSMILE + optional SER)  |                           |
-|  - Map-Reduce Summary (Qwen 7B)       |                           |
-+---------------------------------------+                           |
-                    |                                               |
-                    +-----------------------+-----------------------+
-                                            |
-                                            v
-                    +-----------------------------------------------+
-                    |  5. Output Formatter (.txt)                   |
-                    |  - AI Summary + Acoustic Summary + Transcript |
-                    +-----------------------------------------------+
+```mermaid
+flowchart TD
+    A["Input: Audio/Video File or Live Call<br/>Mic + System Audio"] --> B["Stage 1: FFmpeg Preprocessor<br/>16 kHz mono PCM, EBU R128 loudnorm, RMS silence gate"]
+    B --> C["Stage 2: Speech-to-Text (ASR)<br/>mlx-whisper on Apple Silicon GPU<br/>or WhisperX on CUDA / CPU"]
+    B --> D["Stage 3: Speaker Separation<br/>File: Sherpa-ONNX pyannote + English WeSpeaker<br/>Live: Hardware split Mic = Me, System = Other"]
+    C --> E["Stage 4: Alignment & Smoothing<br/>Sentence-boundary majority vote<br/>+ Turn merging"]
+    D --> E
+    E --> F["Stage 4b (Optional): Local LLM Speaker Repair<br/>Qwen2.5-7B-Instruct-4bit via mlx-lm<br/>Sliding 24-sentence chunks + pause cues"]
+    F --> G["Stage 5 (Optional): Acoustic & Prosody Engine<br/>openSMILE eGeMAPS + DSP<br/>WPM, hesitation blocks, prolongations, stress"]
+    F --> H["Stage 5b (Optional): Local AI Summary<br/>Qwen2.5-7B-Instruct-4bit<br/>Single-pass or Map-Reduce for 1-3+ hr calls"]
+    G --> I["Stage 6: Output Formatter (.txt)<br/>AI Summary + Acoustic Summary + Speaker Turns"]
+    H --> I
 ```
 
 ---
 
-## 3. FOSS Tech Stack
+## 3. Component-by-Component Deep Dive
 
-| Component | Tool / Model | License | Rationale |
+### A. Audio Capture & Preprocessing
+* **Why convert `.m4a`/`.mp4` to 16 kHz mono PCM WAV via `FFmpeg`?**
+  * Neural speech models cannot read compressed AAC/MP3 containers directly — they expect a raw 1D waveform array at 16,000 samples/second (`float32` / `int16`).
+  * Decoding **once** up front lets all downstream stages (ASR, diarization, openSMILE, SER) share one exact timeline (preventing timestamp drift from AAC priming offsets) and enables **instant byte-offset seeking** (`byte = t × 16,000 × 2`) so prosody can read short turn slices without loading a 1-hour file into RAM.
+* **Why EBU R128 Loudness Normalization (`loudnorm` to `-16 LUFS`)?**
+  * Real-world call recordings are often `-40` to `-55 dBFS` (~30 dB quieter than studio speech). `loudnorm` raises speech uniformly to the configured target (`-24` to `-10 LUFS`, default `-16`) without amplifying silence or room tone (unlike dynamic range compressors such as `dynaudnorm`, which boost background hiss into false speech).
+* **Native macOS 14.2+ Dual-Stream Live Call Capture (Zero Virtual Drivers):**
+  * **Mic (`Me`):** Apple's `AVAudioRecorder` writes 16 kHz mono PCM directly to `mic.wav`, with explicit `AVCaptureDevice.requestAccess(for: .audio)` permission handling.
+  * **System Audio (`Other`):** macOS 14.2's **Core Audio Process Tap** (`AudioHardwareCreateProcessTap`) wrapped in a private Aggregate Device streams Zoom/Meet/Teams audio into a direct pure-Swift 16 kHz PCM16 WAV writer — no BlackHole driver and no *Screen Recording* permission required.
+  * **Zero-Collision Sessions & Cleanup:** Each call writes to `~/Library/Caches/VoiceDigest/sessions/<timestamp>_<uuid>/`, so Call #2 can record while Call #1 is still transcribing, followed by immediate auto-deletion on completion and an orphan sweep on launch.
+
+### B. Speech-to-Text (ASR) — `mlx-whisper` vs. `faster-whisper`
+* **What is ASR?** Automatic Speech Recognition — converting audio waveforms into text and word-level timestamps using an encoder-decoder Transformer (OpenAI Whisper).
+* **Why `mlx-whisper` on Apple Silicon instead of `faster-whisper`?**
+  * `faster-whisper` uses CTranslate2, which accelerates on NVIDIA CUDA but falls back to **CPU `int8`** on macOS, throttling fanless laptops and taking 15–20 minutes for a 1-hour call.
+  * Apple's **MLX** framework runs Whisper natively on the **Apple Silicon Metal GPU** with unified memory, reducing a 1-hour `turbo` transcription to **~3 minutes** with much lower CPU heat.
+* **Anti-Hallucination Safeguards:**
+  * Whisper frequently hallucinates `"Thank you."` on silence. VoiceDigest enforces a two-layer defense: (1) an RMS silence energy gate (`RMS < 0.0005` ≈ `-66 dBFS`) before `loudnorm`/ASR, and (2) `condition_on_previous_text=False` + filtering segments with `no_speech_prob > 0.6`.
+
+### C. Speaker Diarization ("Who Spoke When")
+* **How neural diarization works:**
+  1. **Segmentation** (`pyannote-segmentation-3.0`): detects speech activity and speaker change boundaries in sliding windows.
+  2. **Speaker Embeddings** (`WeSpeaker VoxCeleb ResNet34-LM`): converts each speech chunk into a fixed-length vector ("voiceprint").
+  3. **Clustering:** groups voiceprints into $K = N$ speaker clusters (`num_speakers`).
+* **Why `sherpa-onnx` over `pyannote.audio` as the Mac app default?**
+  * `pyannote/speaker-diarization-3.1` is gated behind a Hugging Face token, pulls in ~900 MB of PyTorch, and can suffer PyTorch MPS numerical clustering collapse on Apple Silicon.
+  * `sherpa-onnx` runs `pyannote-segmentation-3.0` + English `WeSpeaker VoxCeleb ResNet34-LM` in **ONNX Runtime** (~32 MB total, zero HF token, fast on CPU, no PyTorch required in the `.dmg`). `pyannote.audio` remains available via CLI.
+* **Sentence-Boundary Smoothing:**
+  * Word-by-word speaker assignment causes isolated single-word flips mid-sentence due to 50–150ms timestamp jitter. Grouping words by sentence boundaries (`. ? !`) and taking a **duration-weighted majority vote** keeps every sentence intact.
+
+### D. Local LLM Speaker Repair & Map-Reduce Summarization (`Qwen2.5-7B-Instruct-4bit`)
+* **Why combine acoustic diarization with an LLM pass?**
+  * Acoustic voiceprints struggle on single-mic compressed calls and ultra-short turns (`< 1.5s`). An LLM leverages conversational semantics (Q&A pairs, reciprocal greetings, pronoun perspective `"I/we"` vs. `"you"`, entity/role continuity).
+* **Zero Text Mutation:**
+  * The LLM **never rewrites transcript text**. It receives numbered sentences (with `[pause Xs]` cues) and outputs **only** a JSON map `{sentence_id: speaker_int}` under greedy decoding (`temp=0.0`), preserving every word and timestamp verbatim.
+* **Bounded Context Window for 1–3+ Hour Calls:**
+  * **Speaker Repair:** Sliding chunks of 24 sentences + 5 sentences of prior labeled `context` (~700 tokens/call — <3% of Qwen's 32K context window).
+  * **Summarization:** Single-pass for short recordings ($\le 12,000$ chars); automatic **Map-Reduce** for long recordings (10,000-char chunk extraction → final deduplicated synthesis guided by the user's 160-char focus prompt).
+
+### E. Acoustic & Prosodic Analysis (`openSMILE` + DSP)
+* Extracts strictly non-lexical biomarkers that plain text loses:
+  * **Speaking Pace:** Articulation WPM (`(last_word.end - first_word.start) - pauses_>=_0.4s`) and syllables/sec, flagging turns `> 175 WPM` or `> +1.5σ` above that speaker's session baseline.
+  * **Acoustic Disfluencies:** Mid-clause silent blocks (`0.4s–1.5s`), word/phoneme prolongations (`>= 0.85s` and `> 3.5×` expected syllable duration), and syllable repetition energy bursts (`80–250ms` envelope peaks).
+  * **Vocal Stress:** Per-speaker z-scored `openSMILE` eGeMAPS features ($F_0$ pitch mean, pitch jitter, spectral flux, rapid breath intakes) plus optional 8-second windowed SpeechBrain SER.
+
+### F. Privacy, Memory & Packaging Engineering
+* **Air-Gap Enforcement:** Sets `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` before ML imports and patches `socket.socket.connect`, `create_connection`, and `getaddrinfo` to raise `OfflineNetworkError` immediately on any non-loopback network call.
+* **Sequential Memory Management:** Peak RAM stays at **~2 GB** (or **~5 GB** with Qwen 7B) because each stage explicitly frees its model and calls `gc.collect()` + `mx.clear_cache()` / `torch.mps.empty_cache()` before loading the next stage.
+* **Self-Contained Mac Packaging (`VoiceDigest.dmg`):** Native SwiftUI binary (~2 MB) spawns a PyInstaller-bundled MLX/Sherpa-ONNX/openSMILE sidecar + bundled `ffmpeg` (`~425 MB` `.dmg`, zero Python/Homebrew/Ollama required). Structured `@@PROGRESS@@ {...}` JSON lines over stdout drive the unified UI progress bar.
+
+---
+
+## 4. Engineering Challenges & Solutions
+
+1. **Metal GPU OOM on Long Monologues (`kIOGPUCommandBufferCallbackErrorOutOfMemory`):**
+   * *Root Cause:* Transformer self-attention in `wav2vec2` SER is $O(T^2)$ in sequence length; a multi-minute turn allocated gigabytes of attention matrix on MPS.
+   * *Solution:* Bounded 8-second windowing (max 4 evenly spaced windows per turn) under `torch.no_grad()`, capping SER memory to `< 200 MB`.
+2. **Speaker Collapse on Quiet Recordings (`-42 dBFS`):**
+   * *Root Cause:* Raw call audio had an RMS of `0.006` (~30 dB below normal speech), compounded by PyTorch MPS clustering instability in `pyannote 3.1`.
+   * *Solution:* EBU R128 `loudnorm` (`-16 LUFS`) + English WeSpeaker VoxCeleb ONNX diarization on CPU.
+3. **LLM Anchoring Bias in Speaker Repair:**
+   * *Root Cause:* Passing noisy `(audio_hint=speaker 1)` on every line caused the LLM to echo broken acoustic guesses rather than reason from dialogue structure.
+   * *Solution:* Removed per-line acoustic hints, added `[pause Xs]` cues + a 1-shot example + greedy decoding (`temp=0.0`) + flexible JSON parsing.
+4. **Silent `mic.wav` & Whisper `"Thank you."` Hallucinations:**
+   * *Root Cause:* `AVAudioConverter`/`AVAudioFile` silently failed on Float32 non-interleaved mic buffers, missing explicit `AVCaptureDevice.requestAccess`, and Apple Silicon's lid-hinge hardware mic disconnect switch — followed by `loudnorm` boosting silence into Whisper.
+   * *Solution:* Switched mic capture to native `AVAudioRecorder`, wrote a direct pure-Swift PCM16 WAV writer for system audio, added an RMS silence gate before `loudnorm`, and filtered high `no_speech_prob` Whisper segments.
+5. **macOS `MenuBarExtra` Popover Resize Artifact:**
+   * *Root Cause:* Dynamically removing a progress bar inside an open SwiftUI `MenuBarExtra(.window)` leaves stale height in the backing `NSPanel`.
+   * *Solution:* Fixed-size popover (`290×260`) with a scrollable inner list so the window frame never shrinks dynamically.
+
+---
+
+## 5. Architectural Trade-Offs
+
+| Decision | Chosen Option | Alternative | Rationale |
 | :--- | :--- | :--- | :--- |
-| **Runtime Language** | Python $3.11+$ & SwiftUI (macOS 13+) | PSF / MIT | Python ML backend with native macOS SwiftUI desktop front-end (`LocalTranscribe.app` / `.dmg`). |
-| **Audio Decoding** | `ffmpeg` (`loudnorm` EBU R128) | LGPL / GPL | Decodes all major audio & video containers (stripping video via `-vn`), normalizes quiet recordings (configurable `-30` to `-5 LUFS`, default `-16`), and outputs $16\text{ kHz}$ mono WAV. |
-| **ASR & Alignment** | **MLX-Whisper** (Apple Silicon GPU) or **WhisperX** (`faster-whisper` + `wav2vec2`) | MIT / BSD-2-Clause | Native Metal GPU inference via MLX on Apple Silicon (`word_timestamps=True`), or batched CTranslate2 + `wav2vec2` forced alignment on CUDA/CPU. |
-| **Speaker Diarization** | **Sherpa-ONNX** (`pyannote-segmentation-3.0` + English `WeSpeaker VoxCeleb ResNet34-LM`) or **pyannote.audio 3.1** | Apache-2.0 / MIT | Zero-token, lightweight (~32 MB) English ONNX diarization with live chunk progress; `pyannote.audio` supported as an optional backend (routed to CPU on Apple Silicon to avoid MPS clustering collapse). |
-| **Local LLM Repair & Summary** | **mlx-lm** (`Qwen2.5-7B-Instruct-4bit`) | Apache-2.0 / MIT | Optional on-device semantic speaker-attribution repair (sliding chunks with `[pause Xs]` cues) and map-reduce transcript summarization with custom focus prompts. |
-| **Acoustic / Stress DSP** | **openSMILE** (`opensmile` Python) + DSP | BSD-3-Clause | Extracts eGeMAPS vocal features (pitch, pitch jitter, spectral flux) locally on CPU. |
-| **Optional Neural SER** | **SpeechBrain** (`emotion-recognition-wav2vec2`) | Apache-2.0 | Local Speech Emotion Recognition evaluated in bounded 8-second windows (max 4 per turn) to prevent GPU OOM; skippable via `--no-ser`. |
-
-### Hardware Acceleration Support
-* **Apple Silicon (M1–M5):** `mlx-whisper` and `mlx-lm` run natively on the Apple GPU via Metal/MLX; PyTorch MPS is used for `wav2vec2` alignment and optional SER; diarization runs on CPU (`sherpa-onnx` or `pyannote`).
-* **NVIDIA GPU:** CUDA $12.x$ with `float16` compute type (`batch_size=16`).
-* **CPU-Only Fallback:** `int8` quantization via CTranslate2 (`faster-whisper`, `batch_size=4`).
+| **Pipeline vs. Agent** | Deterministic multi-stage pipeline (with optional LLM repair/summary) | Autonomous LLM agent loop | Predictable latency, zero runaway token loops, strict offline reliability. |
+| **Apple Silicon ASR** | `mlx-whisper` (Metal GPU) | `faster-whisper` (CPU) or `whisper.cpp` | 5–10× faster and cooler than CPU `faster-whisper` on fanless Macs; seamless Python integration. |
+| **Diarizer** | `sherpa-onnx` (English VoxCeleb) | `pyannote.audio 3.1` | Zero HF token, ~32 MB vs ~900 MB PyTorch, no MPS collapse; `pyannote` remains available via CLI. |
+| **Live Call Mode** | Default: Process on Stop (with optional 60s rolling mode) | Continuous 2s streaming | 0% GPU/heat during Zoom/Meet calls + full-sentence `turbo` accuracy + zero boundary cuts. |
+| **App Architecture** | Native SwiftUI + Python sidecar over JSON stdout | PySide6/Qt or full Swift rewrite | True native macOS UX (Core Audio Process Tap, `sharingType=.none`, ~2 MB UI) while reusing the Python ML ecosystem. |
+| **Distribution** | Download public models on first run into `Application Support` | Bundle 2–6 GB weights inside `.dmg` | Keeps `.dmg` at ~425 MB instead of 6 GB, survives app updates, zero HF tokens needed. |
 
 ---
 
-## 4. Functional Requirements
+## 6. Frequently Asked Technical Questions
 
-### 4.1 Input Handling
-* Accept audio and video files (`.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.aac`, `.aiff`, `.caf`, `.wma`, `.mp4`, `.mov`, `.mkv`, `.webm`) via CLI argument or macOS SwiftUI drag-and-drop / file picker.
-* Validate file existence and non-zero size before processing.
-* Transcode to a temporary $16\text{ kHz}$, $16\text{-bit}$, single-channel PCM `.wav` file using `ffmpeg` (auto-cleaned on exit), with configurable EBU R128 loudness normalization (`--loudness-target`, `--no-loudnorm`).
-
-### 4.2 Strict Offline Execution
-* **Setup Phase (`--download-models`):** Explicit one-time download (or automatic first-run download in the macOS app into `~/Library/Application Support/VoiceDigest/models/`) caching all public weights locally.
-* **Inference Phase (Default):** Enforce offline environment variables before importing ML libraries (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`, `DO_NOT_TRACK=1`) plus a socket-level guard that raises `OfflineNetworkError` on any outbound network or DNS attempt.
-
-### 4.3 Speaker Identification, Smoothing & Semantic Repair
-* Accept `--speakers N` (CLI) or interactive prompt (`Number of speakers [2]: `, defaulting to `2`).
-* Smooth word-level speaker assignments to sentence boundaries via duration-weighted majority vote so sentences are never torn mid-clause across speakers.
-* Assign consistent speaker labels (`speaker 1`, `speaker 2`, ..., `speaker N`) ordered by first appearance, and merge consecutive turns separated by $\le 2.0\text{s}$ (`--pause-threshold`).
-* Optional `--llm-repair`: runs local `Qwen2.5-7B-Instruct-4bit` over sliding 24-sentence chunks (with 5-sentence overlap context and `[pause Xs]` cues) to fix conversational speaker swaps while preserving every transcribed word and timestamp verbatim.
-
-### 4.4 Output Format & Local AI Summary
-* **Base format:** Clean `speaker X: <text>` lines saved to `<input_stem>_transcript.txt` (or `--output path.txt`).
-* **Optional AI Summary (`--summary`, `--summary-focus`):** Prepends a `=== AI SUMMARY ===` block at the top of the `.txt` file using `Qwen2.5-7B-Instruct-4bit`. Automatically uses single-pass summarization for short transcripts ($\le 12,000$ chars) and map-reduce chunking for long 1–3+ hour recordings so it never overflows the context window.
-
----
-
-## 5. Paralinguistic & Acoustic Metadata (`--prosody`)
-
-Strictly acoustic and temporal biomarkers extracted from the audio waveform and word timestamps (never flagging lexical filler words like "um", "uh", or "like"):
-
-1. **Speaking Pace:** Articulation rate in $\text{WPM}$ and syllables/sec computed from turn span minus long silent pauses ($\ge 0.4\text{s}$). Turns exceeding $175\text{ WPM}$ or $> +1.5\sigma$ above that speaker's session baseline are flagged `fast`.
-2. **Acoustic Disfluencies:**
-   * **Mid-clause Blocks:** Abnormal silent gaps ($0.4\text{s}\text{--}1.5\text{s}$) mid-clause between consecutive words.
-   * **Prolongations:** Abnormal word duration spikes ($\ge 0.85\text{s}$ and $> 3.5\times$ expected duration).
-   * **Syllable Repetitions:** Rapid repetitive energy bursts ($80\text{--}250\text{ms}$ intervals) in the amplitude envelope.
-3. **Vocal Stress Markers:** Speaker-normalized `openSMILE` eGeMAPS features ($F_0$ mean, pitch jitter, spectral flux, rapid breath intakes) plus optional windowed 8-second SpeechBrain SER (skippable via `--no-ser`).
-
----
-
-## 6. Interfaces: CLI & macOS SwiftUI App
-
-### CLI Examples
-```bash
-# 1. One-time online setup (Apple Silicon MLX GPU + Sherpa-ONNX + Qwen 7B, no HF token needed)
-python transcribe.py --download-models --asr-backend mlx --model-size turbo --diarizer sherpa-onnx --llm-repair --model-dir ./models
-
-# 2. Offline execution with speaker repair, focused AI summary, prosody & stage caching
-python transcribe.py recording.m4a \
-  --speakers 2 --asr-backend mlx --model-size turbo --diarizer sherpa-onnx --language en \
-  --llm-repair --summary --summary-focus "Key takeaways and action items" \
-  --prosody --no-ser --cache-dir ./.cache --output transcript.txt
-```
-
-### Key CLI Arguments
-* `input_file`: Path to audio/video file (required unless `--download-models` is set).
-* `--download-models`, `--model-dir`: Cache weights locally (default: `./models`).
-* `-s, --speakers`: Expected speaker count (prompts interactively defaulting to `2` if omitted).
-* `-o, --output`: Output `.txt` path (defaults to `<input_stem>_transcript.txt`).
-* `-m, --model-size`: `base`, `small`, `medium`, `large-v3`, `turbo` (default: `turbo`).
-* `--asr-backend`: `auto`, `mlx`, `whisperx` (default: `auto`).
-* `--align`: `auto`, `wav2vec2`, `none` (default: `auto`).
-* `--diarizer`: `pyannote`, `sherpa-onnx` (default: `pyannote`).
-* `--language`: Optional ISO-639-1 code (e.g. `en`); auto-detected if omitted.
-* `--loudness-target` / `--no-loudnorm`: Target EBU R128 loudness in LUFS (default: `-16.0`) or disable normalization.
-* `--llm-repair`: Enable local Qwen 7B speaker-attribution repair.
-* `--summary` / `--summary-focus`: Prepend local Qwen 7B summary with optional focus (up to 160 chars).
-* `--prosody` / `--no-ser` / `--metadata-mode`: Enable acoustic metadata (`both`, `summary-only`, `inline-only`).
-* `--mic-file` / `--system-file` / `--remote-speakers` / `--append`: Dual-channel live call mode (`Me` vs `Other` / `1:N` remote diarization, with optional rolling chunk append).
-* `--device`, `--threads`, `--pause-threshold`, `--cache-dir`, `--json-progress`.
-
-### macOS SwiftUI App (`VoiceDigest.app` / `macos/LocalTranscribeApp/`)
-* Native macOS 14.2+ tabbed SwiftUI window (**Transcribe File** | **Live Call**) with drag-and-drop, file picker, model size & language pickers, speaker stepper, configurable loudness slider (`-24` to `-10 LUFS`), **AI Speaker Repair**, **Publish AI Summary** (160-char focus box + 4 one-click presets), **Prosody** & **Fast DSP-only** toggles, output folder picker (defaults to `Desktop`), built-in `ⓘ` Info sheet, custom macOS Dock icon, Dock-click reopen, and a single unified progress bar driven by `--json-progress`.
-* **Menu Bar Companion Popover:** Fixed-size menu bar popover for 1-click Start/Stop live call capture and recent captures, paired with native dual-stream capture (`AVAudioEngine` mic = `Me` + Core Audio Process Tap system audio = `Other` / `1:N`), optional *Menu Bar Only (Hide Dock Icon)* mode, unique per-call temp sessions under `~/Library/Caches/VoiceDigest/sessions/`, and automatic cleanup.
-* Packaged into `dist/VoiceDigest.app` and drag-and-drop `dist/VoiceDigest.dmg` via `scripts/build_dmg.sh` (supports `--self-contained` to bundle standalone PyInstaller backend + `ffmpeg`).
-
----
-
-## 7. Performance, Memory & Verification
-* **Memory Footprint:** Sequential stage unloading (`del`, `gc.collect()`, `mx.clear_cache()`, `torch.cuda.empty_cache()`, `torch.mps.empty_cache()`) keeps peak RAM around **~2 GB** (ASR + diarization + DSP prosody) or **~5 GB** when Qwen 7B speaker repair/summarization is active.
-* **Reliability:** Live stage progress + wall-clock timers, automatic macOS `caffeinate -i` sleep prevention, and `--cache-dir` intermediate JSON caching.
-* **Automated Verification (`python -m unittest discover -s tests -v`):** 25 unit/integration tests covering offline env & socket blocking, audio validation/slicing/cleanup, first-appearance relabeling, sentence-boundary smoothing, dual-channel `Me`/`Other` interleaving, LLM JSON repair & map-reduce chunking, acoustic prosody (WPM, mid-clause blocks without lexical filler false positives, prolongations, repetitions), output formatting, CLI default prompts, and stage caching.
+* **Is VoiceDigest an AI agent?**
+  * Strictly speaking, no — it is a deterministic multi-stage ML pipeline with embedded LLM stages (speaker repair and map-reduce summarization). Adding a supervisor LLM that inspects diarization confidence or speaker-turn imbalance and autonomously decides whether to re-cluster, switch models, or invoke semantic repair would turn it into an agentic workflow.
+* **Why run 100% locally instead of cloud APIs (Whisper API / Gemini / GPT)?**
+  * Sensitive conversations (interviews, legal, healthcare, M&A, internal engineering) often have strict privacy or NDA requirements where uploading raw audio to third-party APIs is unacceptable. On-device execution with socket-level air-gap enforcement removes compliance friction completely and costs \$0 per hour of audio.
+* **What limits scaling to 5-hour calls or 10+ speakers?**
+  * Temp WAV files scale linearly (~115 MB/hr/channel, manageable at ~1 GB for 5 hrs), and acoustic diarization accuracy degrades past 4–5 speakers on a single mixed microphone. For 10-speaker enterprise calls, per-participant audio tracks (e.g., Zoom raw tracks or RTP streams) combined with a running speaker-profile memory across LLM chunks would be the next architectural step.
+* **How does it behave on an 8 GB RAM Mac?**
+  * Sequential unloading keeps ASR (`small` ~1 GB) + `sherpa-onnx` (~0.4 GB) + DSP prosody (~0.3 GB) well under 2 GB peak RAM. Only the optional `Qwen2.5-7B-4bit` (~5 GB) is tight on 8 GB machines, where switching to `Qwen2.5-3B-4bit` (~2.2 GB) is recommended.
