@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWIFT_PKG="$ROOT_DIR/macos/LocalTranscribeApp"
 DIST_DIR="$ROOT_DIR/dist"
-APP_NAME="LocalTranscribe"
+APP_NAME="VoiceDigest"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
 
@@ -24,17 +24,17 @@ done
 
 echo "==> [1/4] Building SwiftUI macOS app (release)..."
 swift build --package-path "$SWIFT_PKG" -c release
-SWIFT_BIN="$SWIFT_PKG/.build/release/LocalTranscribeApp"
+SWIFT_BIN="$SWIFT_PKG/.build/release/VoiceDigest"
 
 echo "==> [2/4] Assembling ${APP_NAME}.app bundle..."
 rm -rf "$APP_BUNDLE" "$DMG_PATH"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-cp "$SWIFT_BIN" "$APP_BUNDLE/Contents/MacOS/LocalTranscribeApp"
+cp "$SWIFT_BIN" "$APP_BUNDLE/Contents/MacOS/VoiceDigest"
 cp "$SWIFT_PKG/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 if [ -f "$SWIFT_PKG/Assets/AppIcon.icns" ]; then
     cp "$SWIFT_PKG/Assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 fi
-chmod +x "$APP_BUNDLE/Contents/MacOS/LocalTranscribeApp"
+chmod +x "$APP_BUNDLE/Contents/MacOS/VoiceDigest"
 
 if [ "$SELF_CONTAINED" = true ]; then
     echo "==> [2b/4] Bundling self-contained Python MLX/Sherpa-ONNX backend & ffmpeg..."

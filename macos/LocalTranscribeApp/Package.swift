@@ -2,16 +2,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "LocalTranscribeApp",
+    name: "VoiceDigest",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
-        .executable(name: "LocalTranscribeApp", targets: ["LocalTranscribeApp"])
+        .executable(name: "VoiceDigest", targets: ["VoiceDigest"])
     ],
     targets: [
         .executableTarget(
-            name: "LocalTranscribeApp",
+            name: "VoiceDigest",
             path: "Sources/LocalTranscribeApp"
         )
     ]

@@ -287,7 +287,7 @@ final class TranscriptionViewModel: ObservableObject {
     private func resolveBackend() -> BackendCommand? {
         let fm = FileManager.default
         let appSupportModels = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("LocalTranscribe/models")
+            .appendingPathComponent("VoiceDigest/models")
 
         // 1. Self-contained packaged .app bundle
         if let resURL = Bundle.main.resourceURL {

@@ -10,7 +10,7 @@ struct InfoView: View {
                     .font(.title2)
                     .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("About Local Audio Transcribe")
+                    Text("About VoiceDigest")
                         .font(.title3.bold())
                     Text("Settings guide, supported formats, AI models & RAM usage")
                         .font(.caption)

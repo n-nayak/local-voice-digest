@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from local_transcribe.dual_channel import DualChannelConfig, run_dual_channel_pipeline
 from local_transcribe.formatter import VALID_METADATA_MODES
 from local_transcribe.models import (
     DEFAULT_WHISPER_MODEL,
@@ -173,6 +174,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable '@@PROGRESS@@ {...}' JSON lines for GUI frontends.",
     )
     parser.add_argument(
+        "--mic-file",
+        type=Path,
+        default=None,
+        help="Dual-channel mode: path to isolated microphone WAV ('Me').",
+    )
+    parser.add_argument(
+        "--system-file",
+        type=Path,
+        default=None,
+        help="Dual-channel mode: path to isolated system audio WAV ('Other').",
+    )
+    parser.add_argument(
+        "--remote-speakers",
+        type=int,
+        default=1,
+        help="Dual-channel mode: expected remote speakers on system audio (1 = exact 'Other', >=2 = diarize remote).",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Dual-channel live mode: append transcribed chunk lines to output file instead of overwriting.",
+    )
+    parser.add_argument(
         "--language",
         type=str,
         default=None,
@@ -241,6 +265,43 @@ def main(
 
     # Enforce strict offline mode before running any inference
     enforce_offline_environment(args.model_dir)
+
+    # Dual-channel live call mode (--mic-file and/or --system-file)
+    if args.mic_file is not None or args.system_file is not None:
+        if args.output is None:
+            parser.error("--output is required when using --mic-file / --system-file")
+        dual_cfg = DualChannelConfig(
+            mic_file=args.mic_file or Path("/dev/null"),
+            system_file=args.system_file or Path("/dev/null"),
+            output_file=args.output,
+            remote_speakers=max(1, args.remote_speakers),
+            model_dir=args.model_dir,
+            model_size=args.model_size,
+            device=args.device,
+            prosody=args.prosody,
+            metadata_mode=args.metadata_mode,
+            pause_threshold=args.pause_threshold,
+            diarizer=args.diarizer,
+            language=args.language,
+            batch_size=args.batch_size,
+            threads=args.threads,
+            use_ser=not args.no_ser,
+            asr_backend=args.asr_backend,
+            align_mode=args.align,
+            normalize_loudness=not args.no_loudnorm,
+            loudness_target_lufs=args.loudness_target,
+            publish_summary=args.summary,
+            summary_focus=args.summary_focus,
+            json_progress=args.json_progress,
+            append_mode=args.append,
+        )
+        try:
+            written = run_dual_channel_pipeline(dual_cfg)
+            print(f"Transcript saved to: {written}")
+            return 0
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
 
     if args.input_file is None:
         parser.error("the following arguments are required: input_file")

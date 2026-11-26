@@ -89,7 +89,7 @@ This specification defines a 100% local, privacy-preserving application (Python 
 * Transcode to a temporary $16\text{ kHz}$, $16\text{-bit}$, single-channel PCM `.wav` file using `ffmpeg` (auto-cleaned on exit), with configurable EBU R128 loudness normalization (`--loudness-target`, `--no-loudnorm`).
 
 ### 4.2 Strict Offline Execution
-* **Setup Phase (`--download-models`):** Explicit one-time download (or automatic first-run download in the macOS app into `~/Library/Application Support/LocalTranscribe/models/`) caching all public weights locally.
+* **Setup Phase (`--download-models`):** Explicit one-time download (or automatic first-run download in the macOS app into `~/Library/Application Support/VoiceDigest/models/`) caching all public weights locally.
 * **Inference Phase (Default):** Enforce offline environment variables before importing ML libraries (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`, `DO_NOT_TRACK=1`) plus a socket-level guard that raises `OfflineNetworkError` on any outbound network or DNS attempt.
 
 ### 4.3 Speaker Identification, Smoothing & Semantic Repair
@@ -147,9 +147,10 @@ python transcribe.py recording.m4a \
 * `--prosody` / `--no-ser` / `--metadata-mode`: Enable acoustic metadata (`both`, `summary-only`, `inline-only`).
 * `--device`, `--threads`, `--pause-threshold`, `--cache-dir`, `--json-progress`.
 
-### macOS SwiftUI App (`macos/LocalTranscribeApp/`)
-* Native macOS 13+ SwiftUI window with drag-and-drop, file picker, model size & language pickers, speaker stepper, configurable loudness slider (`-24` to `-10 LUFS`), **AI Speaker Repair**, **Publish AI Summary** (160-char focus box + 4 one-click presets), **Prosody** & **Fast DSP-only** toggles, output folder picker (defaults to `Desktop`), built-in `ⓘ` Info sheet, custom macOS Dock icon, and a single unified progress bar driven by `--json-progress`.
-* Packaged into `dist/LocalTranscribe.app` and drag-and-drop `dist/LocalTranscribe.dmg` via `scripts/build_dmg.sh` (supports `--self-contained` to bundle standalone PyInstaller backend + `ffmpeg`).
+### macOS SwiftUI App (`VoiceDigest.app` / `macos/LocalTranscribeApp/`)
+* Native macOS 14.2+ SwiftUI window with drag-and-drop, file picker, model size & language pickers, speaker stepper, configurable loudness slider (`-24` to `-10 LUFS`), **AI Speaker Repair**, **Publish AI Summary** (160-char focus box + 4 one-click presets), **Prosody** & **Fast DSP-only** toggles, output folder picker (defaults to `Desktop`), built-in `ⓘ` Info sheet, custom macOS Dock icon, and a single unified progress bar driven by `--json-progress`.
+* **Menu Bar Popover Live Call Capture:** Menu bar popover with optional *Hide Dock Icon* mode and native dual-stream capture (`AVAudioEngine` mic = `Me` + Core Audio Process Tap system audio = `Other` / `1:N`) with unique per-call temp sessions under `~/Library/Caches/VoiceDigest/sessions/` and automatic cleanup.
+* Packaged into `dist/VoiceDigest.app` and drag-and-drop `dist/VoiceDigest.dmg` via `scripts/build_dmg.sh` (supports `--self-contained` to bundle standalone PyInstaller backend + `ffmpeg`).
 
 ---
 

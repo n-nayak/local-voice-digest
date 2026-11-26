@@ -1,24 +1,54 @@
 import AppKit
 import SwiftUI
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var openMainWindowAction: (() -> Void)?
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openMainWindowAction?()
+        }
+        return true
+    }
+}
+
 @main
 struct LocalTranscribeApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var liveVM = LiveCaptureViewModel()
+    @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
+    @Environment(\.openWindow) private var openWindow
+
     init() {
-        NSApplication.shared.setActivationPolicy(.regular)
+        let hidden = UserDefaults.standard.bool(forKey: "hideDockIcon")
+        NSApplication.shared.setActivationPolicy(hidden ? .accessory : .regular)
         Self.applyDockIconIfNeeded()
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        if !hidden {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup("VoiceDigest", id: "main") {
+            ContentView(liveVM: liveVM)
                 .frame(minWidth: 640, idealWidth: 680, maxWidth: 880, minHeight: 780, idealHeight: 820)
+                .onAppear {
+                    appDelegate.openMainWindowAction = {
+                        openWindow(id: "main")
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                    }
+                }
         }
         .defaultSize(width: 680, height: 820)
+
+        // Menu bar popover for live call capture
+        MenuBarExtra("VoiceDigest", systemImage: "waveform") {
+            MenuBarView(liveVM: liveVM)
+        }
+        .menuBarExtraStyle(.window)
     }
 
     private static func applyDockIconIfNeeded() {
-        // When launched via `swift run` (outside a packaged .app bundle), load Assets/AppIcon.png for the Dock icon.
         let fm = FileManager.default
         if let resURL = Bundle.main.resourceURL {
             for name in ["AppIcon.icns", "AppIcon.png"] {

@@ -1,19 +1,41 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum MainTab: String, CaseIterable, Identifiable {
+    case file = "Transcribe File"
+    case live = "Live Call"
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @StateObject private var vm = TranscriptionViewModel()
+    @ObservedObject var liveVM: LiveCaptureViewModel
+    @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
+    @State private var selectedTab: MainTab = .file
     @State private var isDropTargeted = false
     @State private var showingInfo = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             headerSection
-            dropZoneSection
-            optionsSection
-            outputFolderSection
-            Spacer(minLength: 4)
-            progressAndActionsSection
+
+            Picker("", selection: $selectedTab) {
+                ForEach(MainTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if selectedTab == .file {
+                dropZoneSection
+                optionsSection
+                outputFolderSection
+                Spacer(minLength: 4)
+                progressAndActionsSection
+            } else {
+                liveCallTabSection
+            }
         }
         .padding(22)
         .sheet(isPresented: $showingInfo) {
@@ -25,7 +47,7 @@ struct ContentView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("Local Audio Transcribe")
+                    Text("VoiceDigest")
                         .font(.title2.bold())
                     Button {
                         showingInfo = true
@@ -42,12 +64,6 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Label("Offline", systemImage: "lock.shield.fill")
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(.green.opacity(0.14), in: Capsule())
-                .foregroundStyle(.green)
         }
     }
 
@@ -176,7 +192,7 @@ struct ContentView: View {
                         TextField("e.g., Rate the interview, extract TODOs, or summarize podcast topics", text: $vm.summaryFocus)
                             .textFieldStyle(.roundedBorder)
                             .disabled(vm.isRunning)
-                            .onChange(of: vm.summaryFocus) { newValue in
+                            .onChange(of: vm.summaryFocus) { _, newValue in
                                 if newValue.count > 160 {
                                     vm.summaryFocus = String(newValue.prefix(160))
                                 }
@@ -288,6 +304,195 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.inputFileURL == nil)
                     .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+    }
+
+    private var liveCallTabSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Live capture hero box
+            HStack(spacing: 14) {
+                Image(systemName: liveVM.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(liveVM.isRecording ? Color.green : Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(liveVM.isRecording ? "Capturing Call Audio — \(liveVM.formattedElapsed)" : "Dual-Channel Call Capture")
+                        .font(.headline)
+                    Text("Captures your mic (Me) and system audio (Other) locally. You can also Start/Stop anytime from the top menu bar icon.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+            .padding(16)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+
+            if let warn = liveVM.systemAudioWarning {
+                Text(warn)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let err = liveVM.errorMessage {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            GroupBox("Live Call Settings") {
+                VStack(alignment: .leading, spacing: 11) {
+                    HStack {
+                        Text("Processing Mode")
+                            .frame(width: 120, alignment: .leading)
+                        Picker("", selection: $liveVM.mode) {
+                            ForEach(CaptureProcessingMode.allCases) { m in
+                                Text(m.rawValue).tag(m)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .disabled(liveVM.isRecording)
+                    }
+
+                    HStack {
+                        Text("Whisper Model")
+                            .frame(width: 120, alignment: .leading)
+                        if liveVM.mode == .liveRolling60s {
+                            Picker("", selection: $liveVM.liveChunkModelSize) {
+                                Text("Base (Fastest, ~150 MB)").tag(WhisperModelSize.base)
+                                Text("Small (Balanced, ~500 MB)").tag(WhisperModelSize.small)
+                            }
+                            .labelsHidden()
+                            .disabled(liveVM.isRecording)
+                        } else {
+                            Picker("", selection: $liveVM.modelSize) {
+                                ForEach(WhisperModelSize.allCases) { size in
+                                    Text(size.label).tag(size)
+                                }
+                            }
+                            .labelsHidden()
+                            .disabled(liveVM.isRecording)
+                        }
+                    }
+
+                    HStack {
+                        Text("Other Side")
+                            .frame(width: 120, alignment: .leading)
+                        Stepper(
+                            liveVM.remoteSpeakers == 1 ? "1 person (1:1 exact)" : "\(liveVM.remoteSpeakers) people (1:N diarized)",
+                            value: $liveVM.remoteSpeakers,
+                            in: 1...8
+                        )
+                        .disabled(liveVM.isRecording)
+                        Spacer()
+                    }
+
+                    Divider()
+
+                    Toggle("Post-call Acoustic & Prosody Analysis (DSP)", isOn: $liveVM.enableProsody)
+                        .disabled(liveVM.isRecording)
+
+                    Toggle("Post-call AI Summary (Local Qwen 7B)", isOn: $liveVM.publishSummary)
+                        .disabled(liveVM.isRecording)
+
+                    if liveVM.publishSummary {
+                        TextField("Summary focus (optional, max 160 chars)", text: $liveVM.summaryFocus)
+                            .textFieldStyle(.roundedBorder)
+                            .padding(.leading, 20)
+                            .disabled(liveVM.isRecording)
+                            .onChange(of: liveVM.summaryFocus) { _, newValue in
+                                if newValue.count > 160 {
+                                    liveVM.summaryFocus = String(newValue.prefix(160))
+                                }
+                            }
+                    }
+
+                    Divider()
+
+                    Toggle("Menu Bar Only (Hide Dock Icon)", isOn: $hideDockIcon)
+                        .onChange(of: hideDockIcon) { _, hidden in
+                            NSApplication.shared.setActivationPolicy(hidden ? .accessory : .regular)
+                        }
+                }
+                .padding(8)
+            }
+
+            HStack {
+                Text("Output Folder:")
+                    .font(.subheadline.weight(.medium))
+                Text(liveVM.outputFolderURL.path)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Spacer()
+                Button("Choose…") { liveVM.chooseOutputFolder() }
+                    .disabled(liveVM.isRecording)
+            }
+            .padding(.horizontal, 4)
+
+            HStack {
+                Text("Temporary Audio: \(liveVM.formattedTempUsage)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear Temp Files") { liveVM.clearTempFiles() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 4)
+
+            if !liveVM.jobs.isEmpty {
+                GroupBox("Recent Captures") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(liveVM.jobs.prefix(3)) { job in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(job.title)
+                                        .font(.subheadline)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    if let url = job.outputURL, job.isFinished {
+                                        Button("Open") { liveVM.openOutput(url) }
+                                        Button("Finder") { liveVM.revealOutput(url) }
+                                    } else if let err = job.error {
+                                        Text(err).font(.caption).foregroundStyle(.red).lineLimit(1)
+                                    } else {
+                                        Text("\(Int(job.percent))% — \(job.stage)")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                if !job.isFinished {
+                                    ProgressView(value: job.percent, total: 100.0)
+                                        .progressViewStyle(.linear)
+                                }
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            HStack {
+                Spacer()
+                if liveVM.isRecording {
+                    Button("Cancel", role: .destructive) {
+                        liveVM.cancelCallCapture()
+                    }
+                    Button("Stop & Transcribe") {
+                        liveVM.stopCallCapture()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Start Call Capture") {
+                        liveVM.startCallCapture()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         }

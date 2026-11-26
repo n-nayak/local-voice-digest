@@ -1,8 +1,8 @@
-# Local Audio Transcribe (CLI + macOS SwiftUI App)
+# VoiceDigest (Local Voice Digest — CLI + macOS SwiftUI App)
 
-A 100% local, privacy-preserving application for transcribing long-form audio and video recordings (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.flac`, `.mp4`, `.mov`, and more), identifying speakers, extracting acoustic/prosodic cues, and generating focused AI summaries — with zero outbound network access during inference.
+A 100% local, privacy-preserving application for transcribing long-form audio and video recordings (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.flac`, `.mp4`, `.mov`, and more), capturing live calls from the macOS menu bar, identifying speakers, extracting acoustic/prosodic cues, and generating focused AI summaries — with zero outbound network access during inference.
 
-Includes both a **Python CLI** and a **native macOS SwiftUI App** (`LocalTranscribe.app` / `.dmg`).
+Includes both a **Python CLI** and a **native macOS SwiftUI App** (`VoiceDigest.app` / `VoiceDigest.dmg`).
 
 ---
 
@@ -10,6 +10,7 @@ Includes both a **Python CLI** and a **native macOS SwiftUI App** (`LocalTranscr
 
 - **Strict Offline / Air-Gap Inference:** Sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_HUB_DISABLE_TELEMETRY=1` before importing ML libraries, plus a Python socket-level outbound network blocker during transcription.
 - **Broad Audio & Video Format Support:** Decodes `.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.aac`, `.aiff`, `.caf`, `.wma`, and extracts audio tracks from `.mp4`, `.mov`, `.mkv`, and `.webm` via `ffmpeg`.
+- **Menu Bar Live Call Capture (macOS 14.2+):** Menu bar popover with optional *Hide Dock Icon* mode and native dual-stream capture (Mic = `Me` + Core Audio Process Tap System Audio = `Other` / `1:N` — no BlackHole driver or Screen Recording permission required). Defaults to zero-overhead **Process on Stop** with optional **Live 60s Rolling** chunks and automatic temp cleanup.
 - **Native macOS SwiftUI App:** Drag-and-drop audio/video files, choose model size, speaker count, language, configurable loudness normalization (`-24` to `-10 LUFS`), AI speaker repair, AI summary with custom 160-char focus + one-click presets, pick an output folder (defaults to `Desktop`), view the built-in `ⓘ` guide, and track everything with a single unified progress bar.
 - **Apple Silicon GPU Acceleration:** Runs open-weight Whisper models natively on Apple Silicon GPUs via **`mlx-whisper`** (with `whisperx` / `faster-whisper` fallback on CUDA/CPU).
 - **Zero-Token ONNX Diarization + Sentence Smoothing:** Uses **`sherpa-onnx`** (`pyannote-segmentation-3.0` + English `WeSpeaker VoxCeleb ResNet34-LM`, auto-downloaded from public GitHub Releases — no Hugging Face token required) with sentence-boundary majority smoothing, plus optional `pyannote.audio 3.1` support.
@@ -61,7 +62,7 @@ python transcribe.py recording.m4a \
 swift run --package-path macos/LocalTranscribeApp
 ```
 
-### Build `LocalTranscribe.app` & `LocalTranscribe.dmg`
+### Build `VoiceDigest.app` & `VoiceDigest.dmg`
 ```bash
 chmod +x scripts/build_dmg.sh
 
@@ -73,7 +74,7 @@ uv pip install pyinstaller
 ./scripts/build_dmg.sh --self-contained
 ```
 
-The drag-and-drop disk image is written to `dist/LocalTranscribe.dmg`. On first launch on a new Mac, the app automatically downloads public Whisper MLX + Sherpa-ONNX (+ optional Qwen 7B) weights into `~/Library/Application Support/LocalTranscribe/models` (no token or Terminal required), and runs offline thereafter.
+The drag-and-drop disk image is written to `dist/VoiceDigest.dmg`. On first launch on a new Mac, the app automatically downloads public Whisper MLX + Sherpa-ONNX (+ optional Qwen 7B) weights into `~/Library/Application Support/VoiceDigest/models` (no token or Terminal required), and runs offline thereafter.
 
 ---
 
