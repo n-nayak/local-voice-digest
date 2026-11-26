@@ -1,26 +1,78 @@
-# VoiceDigest (Local Voice Digest — CLI + macOS SwiftUI App)
+<p align="center">
+  <img src="macos/LocalTranscribeApp/Assets/AppIcon.png" alt="VoiceDigest Icon" width="110" />
+</p>
 
-A 100% local, privacy-preserving application for transcribing long-form audio and video recordings (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.flac`, `.mp4`, `.mov`, and more), capturing live calls from the macOS menu bar, identifying speakers, extracting acoustic/prosodic cues, and generating focused AI summaries — with zero outbound network access during inference.
+<h1 align="center">VoiceDigest</h1>
 
-Includes both a **Python CLI** and a **native macOS SwiftUI App** (`VoiceDigest.app` / `VoiceDigest.dmg`).
+<p align="center">
+  <strong>100% offline macOS app & CLI for audio/video transcription, live call capture, acoustic prosody analysis, and on-device AI summaries — powered by Apple Silicon.</strong><br/>
+  Zero cloud uploads. Zero Ollama setup. Zero Hugging Face tokens.
+</p>
+
+<p align="center">
+  <a href="https://github.com/n-nayak/local-voice-digest/releases">
+    <img src="https://img.shields.io/badge/Download-VoiceDigest.dmg%20(Apple%20Silicon)-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download VoiceDigest.dmg" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-14.2%2B%20(Apple%20Silicon)-black?style=flat-square&logo=apple" alt="macOS 14.2+" />
+  <img src="https://img.shields.io/badge/100%25-Offline%20Inference-2ea44f?style=flat-square" alt="100% Offline" />
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/transcribe-file.png" alt="VoiceDigest — Transcribe File" width="48%" />
+  &nbsp;
+  <img src="docs/screenshots/live-call.png" alt="VoiceDigest — Live Call Capture" width="48%" />
+</p>
 
 ---
 
-## Features
+## What Makes VoiceDigest Different?
 
-- **Strict Offline / Air-Gap Inference:** Sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_HUB_DISABLE_TELEMETRY=1` before importing ML libraries, plus a Python socket-level outbound network blocker during transcription.
-- **Broad Audio & Video Format Support:** Decodes `.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.aac`, `.aiff`, `.caf`, `.wma`, and extracts audio tracks from `.mp4`, `.mov`, `.mkv`, and `.webm` via `ffmpeg`.
-- **Menu Bar Live Call Capture (macOS 14.2+):** Menu bar popover with optional *Hide Dock Icon* mode and native dual-stream capture (Mic = `Me` + Core Audio Process Tap System Audio = `Other` / `1:N` — no BlackHole driver or Screen Recording permission required). Defaults to zero-overhead **Process on Stop** with optional **Live 60s Rolling** chunks and automatic temp cleanup.
-- **Native macOS SwiftUI App:** Drag-and-drop audio/video files, choose model size, speaker count, language, configurable loudness normalization (`-24` to `-10 LUFS`), AI speaker repair, AI summary with custom 160-char focus + one-click presets, pick an output folder (defaults to `Desktop`), view the built-in `ⓘ` guide, and track everything with a single unified progress bar.
-- **Apple Silicon GPU Acceleration:** Runs open-weight Whisper models natively on Apple Silicon GPUs via **`mlx-whisper`** (with `whisperx` / `faster-whisper` fallback on CUDA/CPU).
-- **Zero-Token ONNX Diarization + Sentence Smoothing:** Uses **`sherpa-onnx`** (`pyannote-segmentation-3.0` + English `WeSpeaker VoxCeleb ResNet34-LM`, auto-downloaded from public GitHub Releases — no Hugging Face token required) with sentence-boundary majority smoothing, plus optional `pyannote.audio 3.1` support.
-- **Local AI Speaker Repair & Summarization (`Qwen2.5-7B-Instruct-4bit`):** Optional offline LLM pass on Apple Silicon GPU to fix rapid Q&A/greeting speaker swaps (`--llm-repair`) and prepend a focused `=== AI SUMMARY ===` block (`--summary`, `--summary-focus`) using automatic map-reduce chunking so 1–3+ hour recordings never overflow the context window.
-- **Acoustic-First Prosody (`--prosody`):** Measures speaking pace (WPM & syllables/sec), mid-clause silent blocks (`0.4s–1.5s`), prolongations, syllable repetition bursts, and vocal stress markers (`openSMILE` eGeMAPS + DSP + optional windowed 8s SpeechBrain SER).
-- **Long-Form Resilience:** Unloads models sequentially between stages, prevents macOS idle sleep (`caffeinate`), and supports `--cache-dir` for fast re-runs.
+Most local transcription tools stop at plain text — or require setting up Ollama, virtual audio drivers (BlackHole), or gated Hugging Face tokens. **VoiceDigest** ships as one self-contained Mac app that captures **what was said**, **how it was said**, and **what matters**:
+
+- **Acoustic & Prosody Biomarkers (`--prosody`):** Measures speaking pace (WPM), mid-clause hesitation blocks, prolongations, and speaker-normalized vocal stress (`openSMILE` eGeMAPS + DSP) — built for interview prep, sales calls, and communication coaching.
+- **Native Menu-Bar Live Call Capture (macOS 14.2+):** Captures your mic (`Me`) and system audio (`Other` / `1:N`) natively via **Core Audio Process Tap** — no meeting bots, no BlackHole driver, and no *Screen Recording* permission required.
+- **All-in-One Apple Silicon MLX Stack:** Runs `mlx-whisper` (Metal GPU), `sherpa-onnx` (English WeSpeaker VoxCeleb diarization), and `Qwen2.5-7B-Instruct-4bit` (`mlx-lm` speaker-swap repair + map-reduce summarization) directly inside one `.app` with automatic anonymous model downloads.
+- **Strict Air-Gap Enforcement:** Sets `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` before ML imports and installs a Python socket-level outbound network blocker during inference.
+- **Broad Audio & Video Support:** Decodes `.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.aac`, `.aiff`, `.caf`, `.wma`, and extracts audio tracks from `.mp4`, `.mov`, `.mkv`, and `.webm` via bundled `ffmpeg` with configurable EBU R128 loudness normalization (`-24` to `-10 LUFS`).
 
 ---
 
-## Quick Start (CLI)
+## Sample Output
+
+```text
+=== AI SUMMARY ===
+- Discussed deployment timeline and rollout milestones for Q3.
+- Key concern: narrow release window requires earlier QA sign-off.
+- Action item: Speaker 1 to share updated dependency checklist by Thursday.
+==================
+
+=== SESSION ACOUSTIC SUMMARY ===
+Duration: 58m 14s | Speakers: 2
+speaker 1: Avg Pace: 138 WPM (Normal) | Acoustic Disfluencies: 2  | Elevated Stress Turns: 5%
+speaker 2: Avg Pace: 184 WPM (Fast)   | Acoustic Disfluencies: 11 | Elevated Stress Turns: 34%
+================================
+
+speaker 1 [pace: 135 WPM | state: calm]: Good morning, thanks for making time to go over the project timeline today.
+speaker 2 [pace: 192 WPM (fast) | disfluency: 2 blocks | state: tense]: Happy to be here. I have a few concerns about the deployment window we discussed last week.
+speaker 1 [pace: 141 WPM | state: calm]: Let's dive right into those blockers first.
+```
+
+---
+
+## Install the Mac App (No Terminal Required)
+
+1. Download **`VoiceDigest.dmg`** from the [**GitHub Releases**](https://github.com/n-nayak/local-voice-digest/releases) page.
+2. Open the `.dmg` and drag **VoiceDigest** into **Applications**.
+3. **First launch (macOS Gatekeeper):** Because this preview build is ad-hoc signed, **Right-click `VoiceDigest.app` → Open → Open** (or **System Settings → Privacy & Security → Open Anyway**) once — after that, it opens normally.
+4. Drop an audio/video file (or click the menu bar waveform icon for live calls) and click **Start**. Public AI models download automatically on first run into `~/Library/Application Support/VoiceDigest/models/` (zero tokens or logins required).
+
+---
+
+## Quick Start (CLI / Developers)
 
 ### 1. Prerequisites
 - macOS (Apple Silicon recommended) or Linux, Python 3.11+
@@ -55,26 +107,18 @@ python transcribe.py recording.m4a \
 
 ---
 
-## macOS SwiftUI App & `.dmg` Packaging
+## Build `VoiceDigest.app` & `VoiceDigest.dmg` from Source
 
-### Run the SwiftUI App Directly (Development)
-```bash
-swift run --package-path macos/LocalTranscribeApp
-```
-
-### Build `VoiceDigest.app` & `VoiceDigest.dmg`
 ```bash
 chmod +x scripts/build_dmg.sh
 
-# Lightweight build (uses your local .venv during development)
+# Lightweight dev build (uses your local .venv)
 ./scripts/build_dmg.sh
 
 # Self-contained build (bundles standalone MLX/Sherpa-ONNX backend + ffmpeg inside the .app)
 uv pip install pyinstaller
 ./scripts/build_dmg.sh --self-contained
 ```
-
-The drag-and-drop disk image is written to `dist/VoiceDigest.dmg`. On first launch on a new Mac, the app automatically downloads public Whisper MLX + Sherpa-ONNX (+ optional Qwen 7B) weights into `~/Library/Application Support/VoiceDigest/models` (no token or Terminal required), and runs offline thereafter.
 
 ---
 
