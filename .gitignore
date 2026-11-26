@@ -1,0 +1,31 @@
+# Python environments & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local model weights & intermediate run caches (never commit large weights)
+models/
+.cache/
+wav2vec2_checkpoints/
+
+# Private user audio & generated transcripts
+*.m4a
+*.wav
+*.mp3
+transcript.txt
+*_transcript.txt
+
+# Swift / macOS build artifacts
+macos/LocalTranscribeApp/.build/
+macos/LocalTranscribeApp/.swiftpm/
+dist/
+build/
+*.dmg
+*.app/
+
+# macOS OS clutter & local secrets
+.DS_Store
+.env
