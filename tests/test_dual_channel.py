@@ -33,8 +33,8 @@ class TestDualChannelPipeline(unittest.TestCase):
             mic_wav = Path(tmp) / "mic.wav"
             sys_wav = Path(tmp) / "system.wav"
             out_txt = Path(tmp) / "call_transcript.txt"
-            write_synthetic_wav(mic_wav, [0.0] * (3 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
-            write_synthetic_wav(sys_wav, [0.0] * (3 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
+            write_synthetic_wav(mic_wav, [0.05] * (3 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
+            write_synthetic_wav(sys_wav, [0.05] * (3 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
 
             def fake_transcode(in_path: Path, out_wav: Path, normalize_loudness: bool = True, loudness_target_lufs: float = -16.0) -> Path:
                 out_wav.write_bytes(in_path.read_bytes())
@@ -63,6 +63,25 @@ class TestDualChannelPipeline(unittest.TestCase):
             content = out_txt.read_text(encoding="utf-8")
             self.assertIn("Me: Hello from mic.", content)
             self.assertIn("Other: Hello from remote.", content)
+
+    def test_silent_dual_channel_skips_asr_and_prevents_hallucinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mic_wav = Path(tmp) / "mic.wav"
+            sys_wav = Path(tmp) / "system.wav"
+            out_txt = Path(tmp) / "silent_transcript.txt"
+            write_synthetic_wav(mic_wav, [0.0] * (2 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
+            write_synthetic_wav(sys_wav, [0.0] * (2 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
+
+            with mock.patch("local_transcribe.dual_channel.transcribe_and_align") as m_asr:
+                rc = main([
+                    "--mic-file", str(mic_wav),
+                    "--system-file", str(sys_wav),
+                    "--output", str(out_txt),
+                ])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(m_asr.call_count, 0)
+            self.assertEqual(out_txt.read_text(encoding="utf-8"), "")
 
 
 if __name__ == "__main__":

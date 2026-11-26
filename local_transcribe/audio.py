@@ -112,6 +112,29 @@ def transcode_to_wav(
     return output_wav
 
 
+def get_wav_rms(wav_path: Path) -> float:
+    """Compute overall RMS amplitude [0.0, 1.0] of a 16-bit PCM WAV file in chunks."""
+    import math
+
+    sum_sq = 0.0
+    total_samples = 0
+    chunk_frames = 16_000 * 10
+    with wave.open(str(wav_path), "rb") as wf:
+        if wf.getsampwidth() != 2 or wf.getnframes() == 0:
+            return 0.0
+        while True:
+            raw = wf.readframes(chunk_frames)
+            if not raw:
+                break
+            samples = array.array("h")
+            samples.frombytes(raw)
+            sum_sq += sum((s / 32768.0) ** 2 for s in samples)
+            total_samples += len(samples)
+    if total_samples == 0:
+        return 0.0
+    return math.sqrt(sum_sq / total_samples)
+
+
 def get_wav_duration(wav_path: Path) -> float:
     """Read exact duration in seconds from a WAV header without loading audio samples."""
     with wave.open(str(wav_path), "rb") as wf:

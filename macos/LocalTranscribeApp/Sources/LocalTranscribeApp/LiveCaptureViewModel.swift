@@ -95,6 +95,18 @@ final class LiveCaptureViewModel: ObservableObject {
         errorMessage = nil
         systemAudioWarning = nil
 
+        Task {
+            let micGranted = await DualAudioRecorder.ensureMicrophonePermission()
+            guard micGranted else {
+                self.errorMessage = "Microphone permission is required. Enable VoiceDigest in System Settings → Privacy & Security → Microphone."
+                return
+            }
+            self.beginRecordingAfterPermission()
+        }
+    }
+
+    private func beginRecordingAfterPermission() {
+        guard !isRecording else { return }
         do {
             let session = try recorder.startRecording()
             activeSession = session

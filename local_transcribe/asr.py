@@ -185,10 +185,18 @@ def _run_mlx_whisper(
         path_or_hf_repo=model_source,
         language=language,
         word_timestamps=True,
+        condition_on_previous_text=False,
+        no_speech_threshold=0.6,
+        compression_ratio_threshold=2.4,
         verbose=False,
     )
     detected_lang = str(result.get("language") or language or "en")
-    raw_segments = result.get("segments", [])
+    # Drop high no_speech_prob segments (eliminates Whisper silence hallucinations like "Thank you.")
+    raw_segments = [
+        seg
+        for seg in result.get("segments", [])
+        if float(seg.get("no_speech_prob", 0.0) or 0.0) <= 0.6
+    ]
     release_memory()
 
     if run_wav2vec2 and raw_segments:

@@ -10,7 +10,7 @@ from typing import Optional
 
 from local_transcribe.alignment import align_and_merge_turns
 from local_transcribe.asr import resolve_asr_backend, transcribe_and_align
-from local_transcribe.audio import temporary_wav
+from local_transcribe.audio import get_wav_rms, temporary_wav
 from local_transcribe.diarization import diarize_audio
 from local_transcribe.formatter import format_transcript
 from local_transcribe.llm_repair import summarize_transcript
@@ -115,9 +115,19 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
         )
         effective_asr = resolve_asr_backend(config.asr_backend, model_dir, config.model_size)
 
-        _report(5.0, "Preparing dual-channel audio", "Normalizing Mic & System tracks")
-        has_mic = config.mic_file.exists() and config.mic_file.stat().st_size > 44
-        has_sys = config.system_file.exists() and config.system_file.stat().st_size > 44
+        _report(5.0, "Preparing dual-channel audio", "Checking & normalizing Mic & System tracks")
+        # Silence gate: skip channels with no audible speech (RMS < 0.0005 ~= -66 dBFS)
+        # before loudnorm, preventing Whisper from hallucinating "Thank you." on silence.
+        min_speech_rms = 0.0005
+        mic_rms = get_wav_rms(config.mic_file) if (config.mic_file.exists() and config.mic_file.stat().st_size > 44) else 0.0
+        sys_rms = get_wav_rms(config.system_file) if (config.system_file.exists() and config.system_file.stat().st_size > 44) else 0.0
+        logger.info("Dual-channel RMS: mic=%.5f, system=%.5f", mic_rms, sys_rms)
+        has_mic = mic_rms >= min_speech_rms
+        has_sys = sys_rms >= min_speech_rms
+        if config.mic_file.exists() and not has_mic:
+            logger.warning("Mic track is silent (RMS < %.4f); skipping 'Me' channel.", min_speech_rms)
+        if config.system_file.exists() and not has_sys:
+            logger.warning("System track is silent (RMS < %.4f); skipping 'Other' channel.", min_speech_rms)
 
         mic_ctx = (
             temporary_wav(

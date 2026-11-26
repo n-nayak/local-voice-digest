@@ -127,22 +127,41 @@ struct MenuBarView: View {
             Divider()
 
             HStack {
-                Button("Open VoiceDigest") {
+                Button {
                     NSApplication.shared.setActivationPolicy(.regular)
                     openWindow(id: "main")
                     NSApplication.shared.activate(ignoringOtherApps: true)
+                } label: {
+                    Text("Open VoiceDigest")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.28), in: RoundedRectangle(cornerRadius: 7))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .strokeBorder(Color.blue.opacity(0.45), lineWidth: 1)
+                        )
+                        .foregroundStyle(.primary)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.plain)
 
                 Spacer()
 
-                Button("Quit") {
+                Button {
                     NSApplication.shared.terminate(nil)
+                } label: {
+                    Text("Quit")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.28), in: RoundedRectangle(cornerRadius: 7))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .strokeBorder(Color.red.opacity(0.45), lineWidth: 1)
+                        )
+                        .foregroundStyle(.primary)
                 }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
             }
         }
         .padding(14)

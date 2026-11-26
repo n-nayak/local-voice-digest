@@ -81,94 +81,166 @@ enum SessionStorage {
     }
 }
 
-/// Thread-safe 16 kHz, 16-bit, mono PCM WAV writer with automatic resampling.
+/// Thread-safe, zero-dependency 16 kHz 16-bit mono PCM WAV writer.
+/// Handles any input sample rate, channel count, and interleaved/non-interleaved Float32 or Int16 buffer
+/// directly without relying on fragile AVAudioConverter / AVAudioFile format conversions.
 final class PCM16MonoWAVWriter {
     private let lock = NSLock()
-    private let targetFormat: AVAudioFormat
-    private var audioFile: AVAudioFile?
-    private var converter: AVAudioConverter?
-    private var lastInputFormat: AVAudioFormat?
-    private(set) var framesWritten: AVAudioFramePosition = 0
+    private let targetRate: Double = 16_000.0
+    private var fileHandle: FileHandle?
+    private(set) var framesWritten: Int64 = 0
+    private var dataBytesWritten: UInt32 = 0
 
     init(outputURL: URL) throws {
-        guard let fmt = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: true
-        ) else {
-            throw NSError(domain: "LocalTranscribe", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to create 16 kHz mono PCM format."
-            ])
-        }
-        self.targetFormat = fmt
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16_000.0,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-        self.audioFile = try AVAudioFile(
-            forWriting: outputURL,
-            settings: settings,
-            commonFormat: .pcmFormatInt16,
-            interleaved: true
-        )
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: outputURL)
+        // Write placeholder 44-byte RIFF WAV header (finalized with exact sizes on close)
+        try handle.write(contentsOf: Self.makeWAVHeader(dataBytes: 0, sampleRate: 16_000))
+        self.fileHandle = handle
     }
 
     func append(buffer: AVAudioPCMBuffer) {
-        guard buffer.frameLength > 0 else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        guard let file = audioFile else { return }
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
 
-        if lastInputFormat == nil || lastInputFormat != buffer.format {
-            lastInputFormat = buffer.format
-            converter = AVAudioConverter(from: buffer.format, to: targetFormat)
-        }
-        guard let converter else { return }
+        let fmt = buffer.format
+        let inRate = fmt.sampleRate > 0 ? fmt.sampleRate : targetRate
+        let channels = max(1, Int(fmt.channelCount))
 
-        let ratio = targetFormat.sampleRate / max(1.0, buffer.format.sampleRate)
-        let outCapacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio)) + 32
-        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCapacity) else {
+        // 1. Extract mono Float32 samples from any Float32 or Int16 PCM buffer
+        var mono = [Float](repeating: 0.0, count: frameCount)
+        if let floatData = buffer.floatChannelData {
+            if fmt.isInterleaved {
+                let ptr = floatData[0]
+                if channels == 1 {
+                    for i in 0..<frameCount { mono[i] = ptr[i] }
+                } else {
+                    let invCh = 1.0 / Float(channels)
+                    for i in 0..<frameCount {
+                        var sum: Float = 0.0
+                        let base = i * channels
+                        for c in 0..<channels { sum += ptr[base + c] }
+                        mono[i] = sum * invCh
+                    }
+                }
+            } else {
+                if channels == 1 {
+                    let ptr = floatData[0]
+                    for i in 0..<frameCount { mono[i] = ptr[i] }
+                } else {
+                    let invCh = 1.0 / Float(channels)
+                    for i in 0..<frameCount {
+                        var sum: Float = 0.0
+                        for c in 0..<channels { sum += floatData[c][i] }
+                        mono[i] = sum * invCh
+                    }
+                }
+            }
+        } else if let int16Data = buffer.int16ChannelData {
+            let scale: Float = 1.0 / 32768.0
+            if fmt.isInterleaved {
+                let ptr = int16Data[0]
+                let invCh = scale / Float(channels)
+                for i in 0..<frameCount {
+                    var sum: Float = 0.0
+                    let base = i * channels
+                    for c in 0..<channels { sum += Float(ptr[base + c]) }
+                    mono[i] = sum * invCh
+                }
+            } else {
+                let invCh = scale / Float(channels)
+                for i in 0..<frameCount {
+                    var sum: Float = 0.0
+                    for c in 0..<channels { sum += Float(int16Data[c][i]) }
+                    mono[i] = sum * invCh
+                }
+            }
+        } else {
             return
         }
 
-        var consumed = false
-        var convError: NSError?
-        converter.convert(to: outBuffer, error: &convError) { _, outStatus in
-            if consumed {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            outStatus.pointee = .haveData
-            return buffer
+        // 2. Linear-resample to 16 kHz mono Int16
+        let ratio = inRate / targetRate
+        let outCount = max(1, Int(floor(Double(frameCount) / ratio)))
+        var pcm16 = [Int16](repeating: 0, count: outCount)
+        for o in 0..<outCount {
+            let srcPos = Double(o) * ratio
+            let idx = Int(srcPos)
+            let frac = Float(srcPos - Double(idx))
+            let s0 = mono[min(idx, frameCount - 1)]
+            let s1 = mono[min(idx + 1, frameCount - 1)]
+            let sample = max(-1.0, min(1.0, s0 + (s1 - s0) * frac))
+            pcm16[o] = Int16(sample * 32767.0).littleEndian
         }
 
-        if convError == nil, outBuffer.frameLength > 0 {
-            try? file.write(from: outBuffer)
-            framesWritten += AVAudioFramePosition(outBuffer.frameLength)
+        let byteCount = outCount * MemoryLayout<Int16>.size
+        let data = pcm16.withUnsafeBytes { Data($0) }
+
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handle = fileHandle else { return }
+        do {
+            try handle.write(contentsOf: data)
+            framesWritten += Int64(outCount)
+            dataBytesWritten &+= UInt32(byteCount)
+        } catch {
+            // Ignore write errors after close
         }
     }
 
     func close() {
         lock.lock()
         defer { lock.unlock() }
-        audioFile = nil
-        converter = nil
+        guard let handle = fileHandle else { return }
+        do {
+            try handle.seek(toOffset: 0)
+            try handle.write(contentsOf: Self.makeWAVHeader(dataBytes: dataBytesWritten, sampleRate: 16_000))
+            try handle.close()
+        } catch {
+            try? handle.close()
+        }
+        fileHandle = nil
+    }
+
+    private static func makeWAVHeader(dataBytes: UInt32, sampleRate: UInt32) -> Data {
+        var header = Data(capacity: 44)
+        let channels: UInt16 = 1
+        let bitsPerSample: UInt16 = 16
+        let byteRate: UInt32 = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
+        let blockAlign: UInt16 = channels * (bitsPerSample / 8)
+        let riffSize: UInt32 = 36 &+ dataBytes
+
+        func appendU32(_ v: UInt32) {
+            var le = v.littleEndian
+            withUnsafeBytes(of: &le) { header.append(contentsOf: $0) }
+        }
+        func appendU16(_ v: UInt16) {
+            var le = v.littleEndian
+            withUnsafeBytes(of: &le) { header.append(contentsOf: $0) }
+        }
+
+        header.append(contentsOf: "RIFF".utf8)
+        appendU32(riffSize)
+        header.append(contentsOf: "WAVE".utf8)
+        header.append(contentsOf: "fmt ".utf8)
+        appendU32(16) // PCM fmt chunk size
+        appendU16(1)  // PCM format
+        appendU16(channels)
+        appendU32(sampleRate)
+        appendU32(byteRate)
+        appendU16(blockAlign)
+        appendU16(bitsPerSample)
+        header.append(contentsOf: "data".utf8)
+        appendU32(dataBytes)
+        return header
     }
 }
 
 /// Captures both Microphone ('Me') and System Audio ('Other') natively on macOS 14.2+
-/// using AVAudioEngine + Core Audio Process Tap (no Screen Recording permission, no virtual driver).
+/// using AVAudioRecorder + Core Audio Process Tap (no Screen Recording permission, no virtual driver).
 final class DualAudioRecorder {
     private var session: CaptureSession?
-    private var micEngine: AVAudioEngine?
-    private var micWriter: PCM16MonoWAVWriter?
+    private var micRecorder: AVAudioRecorder?
     private var sysWriter: PCM16MonoWAVWriter?
 
     // Core Audio Process Tap handles
@@ -179,6 +251,24 @@ final class DualAudioRecorder {
     private(set) var isRecording: Bool = false
     private(set) var systemAudioActive: Bool = false
 
+    /// Ensure macOS microphone permission is explicitly requested and granted before capturing.
+    static func ensureMicrophonePermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { cont in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    cont.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     func startRecording() throws -> CaptureSession {
         guard !isRecording else {
             throw NSError(domain: "LocalTranscribe", code: 2, userInfo: [
@@ -188,13 +278,11 @@ final class DualAudioRecorder {
 
         let newSession = try SessionStorage.createSession()
         do {
-            let mWriter = try PCM16MonoWAVWriter(outputURL: newSession.micWAVURL)
             let sWriter = try PCM16MonoWAVWriter(outputURL: newSession.systemWAVURL)
-            self.micWriter = mWriter
             self.sysWriter = sWriter
             self.session = newSession
 
-            try startMicrophoneCapture(writer: mWriter)
+            try startMicrophoneCapture(outputURL: newSession.micWAVURL)
             if #available(macOS 14.2, *) {
                 do {
                     try startSystemAudioTap(writer: sWriter)
@@ -223,9 +311,7 @@ final class DualAudioRecorder {
         stopMicrophoneCapture()
         stopSystemAudioTap()
 
-        micWriter?.close()
         sysWriter?.close()
-        micWriter = nil
         sysWriter = nil
 
         let finished = session
@@ -254,30 +340,30 @@ final class DualAudioRecorder {
         return nil
     }
 
-    // MARK: - Microphone Capture (AVAudioEngine)
+    // MARK: - Microphone Capture (AVAudioRecorder — native 16 kHz mono PCM WAV)
 
-    private func startMicrophoneCapture(writer: PCM16MonoWAVWriter) throws {
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-            throw NSError(domain: "LocalTranscribe", code: 3, userInfo: [
-                NSLocalizedDescriptionKey: "No active microphone input device found."
+    private func startMicrophoneCapture(outputURL: URL) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16_000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false
+        ]
+        let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+        recorder.isMeteringEnabled = true
+        guard recorder.prepareToRecord(), recorder.record() else {
+            throw NSError(domain: "VoiceDigest", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Could not start microphone recording. Check System Settings → Privacy & Security → Microphone."
             ])
         }
-
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
-            writer.append(buffer: buffer)
-        }
-        engine.prepare()
-        try engine.start()
-        self.micEngine = engine
+        self.micRecorder = recorder
     }
 
     private func stopMicrophoneCapture() {
-        micEngine?.inputNode.removeTap(onBus: 0)
-        micEngine?.stop()
-        micEngine = nil
+        micRecorder?.stop()
+        micRecorder = nil
     }
 
     // MARK: - System Audio Capture (macOS 14.2+ Core Audio Process Tap)
@@ -420,9 +506,7 @@ final class DualAudioRecorder {
     private func stopAndCleanupOnError() {
         stopMicrophoneCapture()
         stopSystemAudioTap()
-        micWriter?.close()
         sysWriter?.close()
-        micWriter = nil
         sysWriter = nil
         session = nil
         isRecording = false
