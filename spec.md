@@ -145,11 +145,12 @@ python transcribe.py recording.m4a \
 * `--llm-repair`: Enable local Qwen 7B speaker-attribution repair.
 * `--summary` / `--summary-focus`: Prepend local Qwen 7B summary with optional focus (up to 160 chars).
 * `--prosody` / `--no-ser` / `--metadata-mode`: Enable acoustic metadata (`both`, `summary-only`, `inline-only`).
+* `--mic-file` / `--system-file` / `--remote-speakers` / `--append`: Dual-channel live call mode (`Me` vs `Other` / `1:N` remote diarization, with optional rolling chunk append).
 * `--device`, `--threads`, `--pause-threshold`, `--cache-dir`, `--json-progress`.
 
 ### macOS SwiftUI App (`VoiceDigest.app` / `macos/LocalTranscribeApp/`)
-* Native macOS 14.2+ SwiftUI window with drag-and-drop, file picker, model size & language pickers, speaker stepper, configurable loudness slider (`-24` to `-10 LUFS`), **AI Speaker Repair**, **Publish AI Summary** (160-char focus box + 4 one-click presets), **Prosody** & **Fast DSP-only** toggles, output folder picker (defaults to `Desktop`), built-in `ⓘ` Info sheet, custom macOS Dock icon, and a single unified progress bar driven by `--json-progress`.
-* **Menu Bar Popover Live Call Capture:** Menu bar popover with optional *Hide Dock Icon* mode and native dual-stream capture (`AVAudioEngine` mic = `Me` + Core Audio Process Tap system audio = `Other` / `1:N`) with unique per-call temp sessions under `~/Library/Caches/VoiceDigest/sessions/` and automatic cleanup.
+* Native macOS 14.2+ tabbed SwiftUI window (**Transcribe File** | **Live Call**) with drag-and-drop, file picker, model size & language pickers, speaker stepper, configurable loudness slider (`-24` to `-10 LUFS`), **AI Speaker Repair**, **Publish AI Summary** (160-char focus box + 4 one-click presets), **Prosody** & **Fast DSP-only** toggles, output folder picker (defaults to `Desktop`), built-in `ⓘ` Info sheet, custom macOS Dock icon, Dock-click reopen, and a single unified progress bar driven by `--json-progress`.
+* **Menu Bar Companion Popover:** Fixed-size menu bar popover for 1-click Start/Stop live call capture and recent captures, paired with native dual-stream capture (`AVAudioEngine` mic = `Me` + Core Audio Process Tap system audio = `Other` / `1:N`), optional *Menu Bar Only (Hide Dock Icon)* mode, unique per-call temp sessions under `~/Library/Caches/VoiceDigest/sessions/`, and automatic cleanup.
 * Packaged into `dist/VoiceDigest.app` and drag-and-drop `dist/VoiceDigest.dmg` via `scripts/build_dmg.sh` (supports `--self-contained` to bundle standalone PyInstaller backend + `ffmpeg`).
 
 ---
@@ -157,4 +158,4 @@ python transcribe.py recording.m4a \
 ## 7. Performance, Memory & Verification
 * **Memory Footprint:** Sequential stage unloading (`del`, `gc.collect()`, `mx.clear_cache()`, `torch.cuda.empty_cache()`, `torch.mps.empty_cache()`) keeps peak RAM around **~2 GB** (ASR + diarization + DSP prosody) or **~5 GB** when Qwen 7B speaker repair/summarization is active.
 * **Reliability:** Live stage progress + wall-clock timers, automatic macOS `caffeinate -i` sleep prevention, and `--cache-dir` intermediate JSON caching.
-* **Automated Verification (`python -m unittest discover -s tests -v`):** 23 unit/integration tests covering offline env & socket blocking, audio validation/slicing/cleanup, first-appearance relabeling, sentence-boundary smoothing, LLM JSON repair & map-reduce chunking, acoustic prosody (WPM, mid-clause blocks without lexical filler false positives, prolongations, repetitions), output formatting, CLI default prompts, and stage caching.
+* **Automated Verification (`python -m unittest discover -s tests -v`):** 25 unit/integration tests covering offline env & socket blocking, audio validation/slicing/cleanup, first-appearance relabeling, sentence-boundary smoothing, dual-channel `Me`/`Other` interleaving, LLM JSON repair & map-reduce chunking, acoustic prosody (WPM, mid-clause blocks without lexical filler false positives, prolongations, repetitions), output formatting, CLI default prompts, and stage caching.
