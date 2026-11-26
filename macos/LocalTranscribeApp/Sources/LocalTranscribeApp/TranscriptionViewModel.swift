@@ -55,6 +55,45 @@ struct BackendCommand {
     let workingDirectory: URL
     let ffmpegPath: String?
     let modelDir: URL
+
+    /// Resolve either the self-contained bundled CLI sidecar or the local dev .venv backend.
+    static func resolve() -> BackendCommand? {
+        let fm = FileManager.default
+        let appSupportModels = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("VoiceDigest/models")
+
+        if let resURL = Bundle.main.resourceURL {
+            let bundledCLI = resURL.appendingPathComponent("backend/transcribe-cli")
+            if fm.isExecutableFile(atPath: bundledCLI.path) {
+                let bundledFFmpeg = resURL.appendingPathComponent("bin/ffmpeg")
+                return BackendCommand(
+                    executableURL: bundledCLI,
+                    baseArgs: [],
+                    workingDirectory: resURL,
+                    ffmpegPath: fm.isExecutableFile(atPath: bundledFFmpeg.path) ? bundledFFmpeg.path : nil,
+                    modelDir: appSupportModels
+                )
+            }
+        }
+
+        var cursor = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+        for _ in 0..<8 {
+            let script = cursor.appendingPathComponent("transcribe.py")
+            let venvPy = cursor.appendingPathComponent(".venv/bin/python")
+            if fm.fileExists(atPath: script.path) && fm.isExecutableFile(atPath: venvPy.path) {
+                let localModels = cursor.appendingPathComponent("models")
+                return BackendCommand(
+                    executableURL: venvPy,
+                    baseArgs: [script.path],
+                    workingDirectory: cursor,
+                    ffmpegPath: nil,
+                    modelDir: fm.fileExists(atPath: localModels.path) ? localModels : appSupportModels
+                )
+            }
+            cursor.deleteLastPathComponent()
+        }
+        return nil
+    }
 }
 
 @MainActor
@@ -139,7 +178,7 @@ final class TranscriptionViewModel: ObservableObject {
         }
         guard !isRunning else { return }
 
-        guard let backend = resolveBackend() else {
+        guard let backend = BackendCommand.resolve() else {
             errorMessage = "Could not locate bundled transcription engine or local .venv."
             return
         }
@@ -282,46 +321,6 @@ final class TranscriptionViewModel: ObservableObject {
         let hasSherpa = fm.fileExists(atPath: segFile.path) && fm.fileExists(atPath: embFile.path)
         let hasLLM = !includeLLM || ((try? fm.contentsOfDirectory(atPath: llmDir.path).isEmpty == false) ?? false)
         return !(hasMLX && hasSherpa && hasLLM)
-    }
-
-    private func resolveBackend() -> BackendCommand? {
-        let fm = FileManager.default
-        let appSupportModels = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("VoiceDigest/models")
-
-        // 1. Self-contained packaged .app bundle
-        if let resURL = Bundle.main.resourceURL {
-            let bundledCLI = resURL.appendingPathComponent("backend/transcribe-cli")
-            if fm.isExecutableFile(atPath: bundledCLI.path) {
-                let bundledFFmpeg = resURL.appendingPathComponent("bin/ffmpeg")
-                return BackendCommand(
-                    executableURL: bundledCLI,
-                    baseArgs: [],
-                    workingDirectory: resURL,
-                    ffmpegPath: fm.isExecutableFile(atPath: bundledFFmpeg.path) ? bundledFFmpeg.path : nil,
-                    modelDir: appSupportModels
-                )
-            }
-        }
-
-        // 2. Development mode: walk upward from executable to locate repo root (.venv + transcribe.py)
-        var cursor = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
-        for _ in 0..<8 {
-            let script = cursor.appendingPathComponent("transcribe.py")
-            let venvPy = cursor.appendingPathComponent(".venv/bin/python")
-            if fm.fileExists(atPath: script.path) && fm.isExecutableFile(atPath: venvPy.path) {
-                let localModels = cursor.appendingPathComponent("models")
-                return BackendCommand(
-                    executableURL: venvPy,
-                    baseArgs: [script.path],
-                    workingDirectory: cursor,
-                    ffmpegPath: nil,
-                    modelDir: fm.fileExists(atPath: localModels.path) ? localModels : appSupportModels
-                )
-            }
-            cursor.deleteLastPathComponent()
-        }
-        return nil
     }
 
     private nonisolated func runSubprocess(backend: BackendCommand, args: [String]) async throws {

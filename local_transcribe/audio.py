@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 TARGET_SAMPLE_RATE = 16_000
 TARGET_CHANNELS = 1
-TARGET_SAMPLE_WIDTH = 2  # 16-bit PCM
 
 SUPPORTED_MEDIA_EXTENSIONS = frozenset({
     ".m4a", ".mp3", ".wav", ".ogg", ".opus", ".flac",

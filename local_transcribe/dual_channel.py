@@ -23,7 +23,7 @@ from local_transcribe.offline import enforce_offline_environment, offline_socket
 from local_transcribe.pipeline import emit_json_progress
 from local_transcribe.power import format_elapsed, prevent_system_sleep, timed_stage
 from local_transcribe.prosody import analyze_session_prosody
-from local_transcribe.types import ASRSegment, DiarizationSegment, SessionSummary, Turn, Word
+from local_transcribe.types import ASRSegment, DiarizationSegment, SessionSummary, Turn
 
 logger = logging.getLogger(__name__)
 

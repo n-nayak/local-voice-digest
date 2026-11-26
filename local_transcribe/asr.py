@@ -189,17 +189,6 @@ def _run_mlx_whisper(
     )
     detected_lang = str(result.get("language") or language or "en")
     raw_segments = result.get("segments", [])
-
-    # Release MLX GPU cache before any PyTorch stages
-    try:
-        import mlx.core as mx
-
-        if hasattr(mx, "clear_cache"):
-            mx.clear_cache()
-        elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-            mx.metal.clear_cache()
-    except Exception:
-        pass
     release_memory()
 
     if run_wav2vec2 and raw_segments:

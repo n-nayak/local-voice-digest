@@ -213,7 +213,7 @@ final class LiveCaptureViewModel: ObservableObject {
         }
         let chunkModel = liveChunkModelSize
         Task.detached { [weak self] in
-            guard let self, let backend = await self.resolveBackend() else { return }
+            guard let self, let backend = BackendCommand.resolve() else { return }
             defer {
                 try? FileManager.default.removeItem(at: chunk.micChunk)
                 try? FileManager.default.removeItem(at: chunk.sysChunk)
@@ -254,7 +254,7 @@ final class LiveCaptureViewModel: ObservableObject {
             }
         }
 
-        guard let backend = await resolveBackend() else {
+        guard let backend = BackendCommand.resolve() else {
             await updateJob(session.id, percent: 0, stage: "Failed", error: "Backend not found", finished: true)
             return
         }
@@ -353,44 +353,6 @@ final class LiveCaptureViewModel: ObservableObject {
         let llmDir = modelDir.appendingPathComponent("llm/qwen2.5-7b-4bit")
         let hasLLM = !needLLM || ((try? fm.contentsOfDirectory(atPath: llmDir.path).isEmpty == false) ?? false)
         return !(hasMLX && hasSherpa && hasLLM)
-    }
-
-    private func resolveBackend() -> BackendCommand? {
-        let fm = FileManager.default
-        let appSupportModels = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("VoiceDigest/models")
-
-        if let resURL = Bundle.main.resourceURL {
-            let bundledCLI = resURL.appendingPathComponent("backend/transcribe-cli")
-            if fm.isExecutableFile(atPath: bundledCLI.path) {
-                let bundledFFmpeg = resURL.appendingPathComponent("bin/ffmpeg")
-                return BackendCommand(
-                    executableURL: bundledCLI,
-                    baseArgs: [],
-                    workingDirectory: resURL,
-                    ffmpegPath: fm.isExecutableFile(atPath: bundledFFmpeg.path) ? bundledFFmpeg.path : nil,
-                    modelDir: appSupportModels
-                )
-            }
-        }
-
-        var cursor = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
-        for _ in 0..<8 {
-            let script = cursor.appendingPathComponent("transcribe.py")
-            let venvPy = cursor.appendingPathComponent(".venv/bin/python")
-            if fm.fileExists(atPath: script.path) && fm.isExecutableFile(atPath: venvPy.path) {
-                let localModels = cursor.appendingPathComponent("models")
-                return BackendCommand(
-                    executableURL: venvPy,
-                    baseArgs: [script.path],
-                    workingDirectory: cursor,
-                    ffmpegPath: nil,
-                    modelDir: fm.fileExists(atPath: localModels.path) ? localModels : appSupportModels
-                )
-            }
-            cursor.deleteLastPathComponent()
-        }
-        return nil
     }
 
     private nonisolated func runCLI(backend: BackendCommand, args: [String], jobID: String?) async throws {

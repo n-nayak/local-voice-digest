@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import shutil
+import sys
 import tarfile
 import tempfile
 import urllib.request
@@ -107,18 +108,27 @@ def resolve_device_config(
 
 
 def release_memory() -> None:
-    """Force garbage collection and release GPU/MPS allocator caches between pipeline stages."""
+    """Force garbage collection and release GPU/MPS/MLX allocator caches between pipeline stages."""
     gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-                torch.mps.empty_cache()
-    except ImportError:
-        pass
+    mx = sys.modules.get("mlx.core")
+    if mx is not None:
+        try:
+            if hasattr(mx, "clear_cache"):
+                mx.clear_cache()
+            elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+                mx.metal.clear_cache()
+        except Exception:
+            pass
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+        except Exception:
+            pass
 
 
 def whisper_model_path(model_dir: Path, model_size: str) -> Path:

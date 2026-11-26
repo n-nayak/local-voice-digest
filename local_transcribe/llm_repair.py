@@ -247,15 +247,6 @@ def repair_speaker_turns(
                     repaired_speakers[idx] = new_spk
     finally:
         del model, tokenizer
-        try:
-            import mlx.core as mx
-
-            if hasattr(mx, "clear_cache"):
-                mx.clear_cache()
-            elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-                mx.metal.clear_cache()
-        except Exception:
-            pass
         release_memory()
 
     logger.info(
@@ -395,13 +386,4 @@ def summarize_transcript(
         return _run_mlx_chat(model, tokenizer, reduce_sys, combined, max_tokens=750)
     finally:
         del model, tokenizer
-        try:
-            import mlx.core as mx
-
-            if hasattr(mx, "clear_cache"):
-                mx.clear_cache()
-            elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-                mx.metal.clear_cache()
-        except Exception:
-            pass
         release_memory()

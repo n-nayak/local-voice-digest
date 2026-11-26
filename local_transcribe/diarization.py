@@ -156,9 +156,6 @@ def _diarize_sherpa_onnx(
     base = sherpa_model_path(model_dir)
     seg_model = base / "segmentation.onnx"
     emb_model = base / SHERPA_EMB_FILENAME
-    if not emb_model.exists():
-        # Fall back to legacy filename if present
-        emb_model = base / "embedding.onnx"
     if not seg_model.exists() or not emb_model.exists():
         raise FileNotFoundError(
             f"Sherpa-ONNX models not found in '{base}'. "

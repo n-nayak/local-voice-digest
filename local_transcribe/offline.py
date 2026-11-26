@@ -29,7 +29,6 @@ def configure_model_cache_env(model_dir: Path | str) -> Path:
 
     os.environ["HF_HOME"] = str(hf_dir)
     os.environ["HF_HUB_CACHE"] = str(hf_dir / "hub")
-    os.environ["TRANSFORMERS_CACHE"] = str(hf_dir / "hub")
     os.environ["TORCH_HOME"] = str(torch_dir)
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["DO_NOT_TRACK"] = "1"

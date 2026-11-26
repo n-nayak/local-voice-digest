@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct LocalTranscribeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var liveVM = LiveCaptureViewModel()
-    @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     init() {
