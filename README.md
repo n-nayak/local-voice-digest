@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="macos/LocalTranscribeApp/Assets/AppIcon.png" alt="VoiceDigest Icon" width="110" />
+  <img src="macos/VoiceDigestApp/Assets/AppIcon.png" alt="VoiceDigest Icon" width="110" />
 </p>
 
 <h1 align="center">VoiceDigest</h1>
