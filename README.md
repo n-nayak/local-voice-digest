@@ -26,6 +26,11 @@
   &nbsp;
   <img src="docs/screenshots/live-call.png" alt="VoiceDigest — Live Call Capture" width="48%" />
 </p>
+<p align="center">
+  <img src="docs/screenshots/dictation.png" alt="VoiceDigest — System-Wide Dictation (<500 ms)" width="48%" />
+  &nbsp;
+  <img src="docs/screenshots/settings.png" alt="VoiceDigest — Offline Models & Settings" width="48%" />
+</p>
 
 ---
 
