@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -366,6 +367,52 @@ struct ContentView: View {
             .padding(16)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
 
+            // Permissions row (matches Dictation tab layout)
+            HStack(spacing: 12) {
+                permissionBadge(
+                    title: "Microphone (Me)",
+                    granted: dictationManager.hasMicrophonePermission,
+                    actionTitle: AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined ? "Allow" : "Open Settings"
+                ) {
+                    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                        dictationManager.requestMicrophonePermission()
+                    } else {
+                        DualAudioRecorder.openMicrophoneSettings()
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: liveVM.systemAudioVerified == true
+                          ? "checkmark.circle.fill"
+                          : (liveVM.systemAudioVerified == false ? "exclamationmark.circle.fill" : "speaker.wave.2.circle"))
+                        .foregroundStyle(liveVM.systemAudioVerified == true
+                                         ? Color.green
+                                         : (liveVM.systemAudioVerified == false ? Color.orange : Color.secondary))
+                    Text("System Audio (Other)")
+                        .font(.caption.weight(.medium))
+                    if liveVM.isVerifyingSystemAudio {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else if liveVM.systemAudioVerified != true {
+                        if liveVM.systemAudioVerified == false {
+                            Button("Open Settings") {
+                                DualAudioRecorder.openSystemAudioSettings()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                        Button("Verify") {
+                            liveVM.verifySystemAudio()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
             if let warn = liveVM.systemAudioWarning {
                 Text(warn)
                     .font(.caption)
@@ -667,7 +714,7 @@ struct ContentView: View {
         switch dictationManager.status {
         case .ready: return .green
         case .listening: return .red
-        case .transcribing, .warmingUp, .downloading: return .orange
+        case .waitingForPermission, .transcribing, .warmingUp, .downloading: return .orange
         case .error: return .red
         case .off: return .secondary
         }

@@ -51,6 +51,7 @@ enum DictationHotkeyOption: String, CaseIterable, Identifiable {
 
 enum DictationDaemonStatus: Equatable {
     case off
+    case waitingForPermission
     case downloading(String)
     case warmingUp
     case ready
@@ -61,6 +62,7 @@ enum DictationDaemonStatus: Equatable {
     var label: String {
         switch self {
         case .off: return "Off"
+        case .waitingForPermission: return "Waiting for permission…"
         case .downloading(let detail): return detail
         case .warmingUp: return "Loading warm models…"
         case .ready: return "Ready (<500 ms)"
@@ -162,6 +164,7 @@ final class DictationManager: ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private var isHotkeyPressed = false
     private var activeObserver: NSObjectProtocol?
+    private var permissionPollTimer: Timer?
 
     private var recorder: AVAudioRecorder?
     private var currentClipURL: URL?
@@ -239,10 +242,31 @@ final class DictationManager: ObservableObject {
         hasAccessibilityPermission = axTrusted
         hasMicrophonePermission = micGranted
 
-        if axTrusted && isEnabled && eventTap == nil && status.isReadyOrActive {
+        if isEnabled && axTrusted && micGranted && eventTap == nil && daemonProcess?.isRunning == true {
             errorMessage = nil
-            installGlobalEventTap()
+            if installGlobalEventTap() {
+                stopPermissionPollTimer()
+                status = .ready
+            }
         }
+    }
+
+    private func startPermissionPollTimer() {
+        stopPermissionPollTimer()
+        permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isEnabled else {
+                    self?.stopPermissionPollTimer()
+                    return
+                }
+                self.refreshPermissions()
+            }
+        }
+    }
+
+    private func stopPermissionPollTimer() {
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = nil
     }
 
     func requestAccessibilityPermission() {
@@ -253,11 +277,6 @@ final class DictationManager: ObservableObject {
     }
 
     func openAccessibilitySettings() {
-        // Trigger macOS prompt so VoiceDigest is registered in the Accessibility list
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options: CFDictionary = [key: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             let opened = NSWorkspace.shared.open(url)
             if !opened {
@@ -268,8 +287,9 @@ final class DictationManager: ObservableObject {
 
     func requestMicrophonePermission() {
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.hasMicrophonePermission = granted
+                self?.refreshPermissions()
             }
         }
     }
@@ -277,6 +297,7 @@ final class DictationManager: ObservableObject {
     // MARK: - Lifecycle
 
     func shutdown() {
+        stopPermissionPollTimer()
         stopRecordingIfNeeded(discard: true)
         removeGlobalEventTap()
         terminateDaemon()
@@ -293,7 +314,7 @@ final class DictationManager: ObservableObject {
                 requestMicrophonePermission()
             }
             if !hasAccessibilityPermission {
-                requestAccessibilityPermission()
+                openAccessibilitySettings()
             }
         }
 
@@ -333,8 +354,16 @@ final class DictationManager: ObservableObject {
                 return
             }
 
-            installGlobalEventTap()
-            status = .ready
+            refreshPermissions()
+            if hasAccessibilityPermission && hasMicrophonePermission && installGlobalEventTap() {
+                stopPermissionPollTimer()
+                errorMessage = nil
+                status = .ready
+            } else {
+                // Keep daemon warm and poll every 1s until user clicks Allow in macOS prompt/Settings
+                status = .waitingForPermission
+                startPermissionPollTimer()
+            }
         } catch {
             let msg = error.localizedDescription
             errorMessage = msg
@@ -519,7 +548,8 @@ final class DictationManager: ObservableObject {
 
     // MARK: - Global Hotkey (CGEventTap)
 
-    private func installGlobalEventTap() {
+    @discardableResult
+    private func installGlobalEventTap() -> Bool {
         removeGlobalEventTap()
 
         let mask: CGEventMask =
@@ -545,9 +575,9 @@ final class DictationManager: ObservableObject {
             },
             userInfo: userInfo
         ) else {
-            refreshPermissions()
-            errorMessage = "Enable Accessibility permission in System Settings to use the global dictation hotkey."
-            return
+            hasAccessibilityPermission = AXIsProcessTrusted()
+            errorMessage = "Enable Accessibility permission in System Settings to activate the global dictation hotkey."
+            return false
         }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -555,6 +585,7 @@ final class DictationManager: ObservableObject {
         CGEvent.tapEnable(tap: tap, enable: true)
         eventTap = tap
         runLoopSource = source
+        return true
     }
 
     private func removeGlobalEventTap() {

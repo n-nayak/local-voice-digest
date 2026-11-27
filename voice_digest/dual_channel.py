@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from voice_digest.alignment import align_and_merge_turns
+from voice_digest.alignment import _join_word_texts, align_and_merge_turns
 from voice_digest.asr import resolve_asr_backend, transcribe_and_align
 from voice_digest.audio import get_wav_rms, temporary_wav
 from voice_digest.diarization import diarize_audio
@@ -23,9 +24,227 @@ from voice_digest.offline import enforce_offline_environment, offline_socket_gua
 from voice_digest.pipeline import emit_json_progress
 from voice_digest.power import format_elapsed, prevent_system_sleep, timed_stage
 from voice_digest.prosody import analyze_session_prosody
-from voice_digest.types import ASRSegment, DiarizationSegment, SessionSummary, Turn
+from voice_digest.types import ASRSegment, DiarizationSegment, SessionSummary, Turn, Word
 
 logger = logging.getLogger(__name__)
+
+_ECHO_NORM_RE = re.compile(r"[^a-z0-9']+")
+
+
+def _norm_echo_token(text: str) -> str:
+    return _ECHO_NORM_RE.sub("", text.lower()).strip("'")
+
+
+def _flatten_segments_to_words(segments: list[ASRSegment]) -> list[Word]:
+    """Extract word-level timestamps from ASR segments, interpolating if a segment lacks words."""
+    words: list[Word] = []
+    for seg in segments:
+        if seg.words:
+            words.extend(seg.words)
+            continue
+        tokens = seg.text.strip().split()
+        if not tokens:
+            continue
+        dur = max(0.05, seg.end - seg.start)
+        step = dur / len(tokens)
+        for idx, tok in enumerate(tokens):
+            words.append(
+                Word(
+                    text=tok,
+                    start=seg.start + idx * step,
+                    end=seg.start + (idx + 1) * step,
+                )
+            )
+    return words
+
+
+def suppress_mic_echo_segments(
+    mic_segs: list[ASRSegment],
+    sys_segs: list[ASRSegment],
+    max_lead_sec: float = 0.35,
+    max_lag_sec: float = 0.65,
+) -> list[ASRSegment]:
+    """Remove speaker-to-mic acoustic bleed (echo) from Mic ('Me') segments using System ('Other') words.
+
+    Acoustic bleed from laptop speakers arrives at the microphone causally (at or slightly after
+    the system audio timestamp, with small ASR timestamp jitter). Matching word runs within
+    `[sys_start - max_lead_sec, sys_end + max_lag_sec]` are excised from `mic_segs` so `Other`
+    speech is never duplicated under `Me`, and surviving `Me` utterances split cleanly around
+    each remote turn.
+    """
+    if not mic_segs or not sys_segs:
+        return mic_segs
+
+    mic_words = _flatten_segments_to_words(mic_segs)
+    sys_words = _flatten_segments_to_words(sys_segs)
+    if not mic_words or not sys_words:
+        return mic_segs
+
+    sys_index: list[tuple[str, float, float]] = []
+    for sw in sys_words:
+        tok = _norm_echo_token(sw.text)
+        if tok:
+            sys_index.append((tok, sw.start, sw.end))
+    if not sys_index:
+        return mic_segs
+
+    n = len(mic_words)
+    mic_norms = [_norm_echo_token(w.text) for w in mic_words]
+
+    # Step 1: Flag every mic word that matches a system word in the causal echo window
+    direct_match = [False] * n
+    for i, (w, tok) in enumerate(zip(mic_words, mic_norms)):
+        if not tok:
+            continue
+        for sys_tok, s_start, s_end in sys_index:
+            if s_end + max_lag_sec < w.start:
+                continue
+            if s_start - max_lead_sec > w.end:
+                break
+            if sys_tok == tok:
+                direct_match[i] = True
+                break
+
+    # Step 2: Bridge 1-word ASR mismatch gaps inside an echo phrase
+    bridged = list(direct_match)
+    for i in range(1, n - 1):
+        if not bridged[i] and direct_match[i - 1] and direct_match[i + 1]:
+            gap_prev = mic_words[i].start - mic_words[i - 1].end
+            gap_next = mic_words[i + 1].start - mic_words[i].end
+            if gap_prev <= 0.8 and gap_next <= 0.8:
+                bridged[i] = True
+
+    # Step 3: Drop contiguous matched runs of >= 2 words (preserves genuine 1-word backchannels)
+    drop = [False] * n
+    i = 0
+    while i < n:
+        if not bridged[i]:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and bridged[j] and (mic_words[j].start - mic_words[j - 1].end) <= 1.2:
+            j += 1
+        run_len = j - i
+        if run_len >= 2:
+            for k in range(i, j):
+                drop[k] = True
+        i = j
+
+    # Step 3b: Phrase-level n-gram fallback (>= 4 consecutive matching words within ±30s)
+    # Catches speaker bleed even if two recordings have slight clock drift between mic and system.
+    sys_norms = [t for t, _, _ in sys_index]
+    m_sys = len(sys_norms)
+    if n >= 4 and m_sys >= 4:
+        # Index 4-grams in system words -> list of start indices
+        ngram_map: dict[tuple[str, str, str, str], list[int]] = {}
+        for s_idx in range(m_sys - 3):
+            key = (sys_norms[s_idx], sys_norms[s_idx + 1], sys_norms[s_idx + 2], sys_norms[s_idx + 3])
+            if all(key):
+                ngram_map.setdefault(key, []).append(s_idx)
+
+        i = 0
+        while i <= n - 4:
+            if drop[i]:
+                i += 1
+                continue
+            key = (mic_norms[i], mic_norms[i + 1], mic_norms[i + 2], mic_norms[i + 3])
+            candidates = ngram_map.get(key)
+            if not candidates:
+                i += 1
+                continue
+            best_len = 0
+            for s_idx in candidates:
+                # Must be within ±30s of the system phrase
+                if abs(mic_words[i].start - sys_index[s_idx][1]) > 30.0:
+                    continue
+                k = 4
+                while (
+                    i + k < n
+                    and s_idx + k < m_sys
+                    and mic_norms[i + k] == sys_norms[s_idx + k]
+                ):
+                    k += 1
+                if k > best_len:
+                    best_len = k
+            if best_len >= 4:
+                for k in range(i, i + best_len):
+                    drop[k] = True
+                i += best_len
+            else:
+                i += 1
+
+    # Step 4: Drop isolated distinctive echo words (>= 6 chars) right next to a dropped echo run
+    # (catches trailing Whisper echo repeats like "...in the inner city especially")
+    extended_lag = max_lag_sec * 2.5
+    for i in range(n):
+        if drop[i] or len(mic_norms[i]) < 6:
+            continue
+        near_prev = i > 0 and drop[i - 1] and (mic_words[i].start - mic_words[i - 1].end) <= 1.2
+        near_next = i + 1 < n and drop[i + 1] and (mic_words[i + 1].start - mic_words[i].end) <= 1.2
+        if not (near_prev or near_next):
+            continue
+        if direct_match[i]:
+            drop[i] = True
+            continue
+        tok = mic_norms[i]
+        w = mic_words[i]
+        for sys_tok, s_start, s_end in sys_index:
+            if s_end + extended_lag < w.start:
+                continue
+            if s_start - max_lead_sec > w.end:
+                break
+            if sys_tok == tok:
+                drop[i] = True
+                break
+
+    dropped_count = sum(1 for d in drop if d)
+    if dropped_count == 0:
+        return mic_segs
+
+    logger.info(
+        "Dual-channel echo cancellation removed %d / %d echoed speaker words from Mic ('Me').",
+        dropped_count,
+        n,
+    )
+
+    # Step 5: Rebuild ASRSegments from surviving mic words, splitting across excised echo gaps
+    rebuilt: list[ASRSegment] = []
+    buf: list[Word] = []
+    for idx, w in enumerate(mic_words):
+        if drop[idx]:
+            if buf:
+                rebuilt.append(
+                    ASRSegment(
+                        start=buf[0].start,
+                        end=buf[-1].end,
+                        text=_join_word_texts(buf),
+                        words=list(buf),
+                    )
+                )
+                buf = []
+            continue
+        if buf and (w.start - buf[-1].end) > 1.2:
+            rebuilt.append(
+                ASRSegment(
+                    start=buf[0].start,
+                    end=buf[-1].end,
+                    text=_join_word_texts(buf),
+                    words=list(buf),
+                )
+            )
+            buf = []
+        buf.append(w)
+
+    if buf:
+        rebuilt.append(
+            ASRSegment(
+                start=buf[0].start,
+                end=buf[-1].end,
+                text=_join_word_texts(buf),
+                words=list(buf),
+            )
+        )
+    return rebuilt
 
 
 @dataclass
@@ -75,13 +294,76 @@ def _segments_to_single_speaker_turns(
     return turns
 
 
+def _split_turn_at_timestamps(turn: Turn, cut_times: list[float]) -> list[Turn]:
+    """Split a long Turn at sentence/word boundaries near any interjecting turn start times."""
+    if not cut_times or len(turn.words) < 2:
+        return [turn]
+
+    words = list(turn.words)
+    split_indices: list[int] = []
+    for t_cut in sorted(cut_times):
+        if t_cut <= words[0].start + 0.4 or t_cut >= words[-1].end - 0.4:
+            continue
+        # Find the first word starting at or after t_cut
+        word_idx = next((idx for idx, w in enumerate(words) if w.start >= t_cut), None)
+        if word_idx is None or word_idx <= 0:
+            continue
+
+        # Prefer a nearby sentence boundary (., ?, !) within ±1.5s so sentences stay intact
+        best_idx = word_idx
+        best_dist = 1.5
+        for cand in range(max(1, word_idx - 8), min(len(words), word_idx + 8)):
+            prev_text = words[cand - 1].text.strip()
+            if prev_text.endswith((".", "?", "!")):
+                dist = abs(words[cand].start - t_cut)
+                if dist <= best_dist:
+                    best_dist = dist
+                    best_idx = cand
+        if best_idx > 0 and best_idx < len(words):
+            split_indices.append(best_idx)
+
+    if not split_indices:
+        return [turn]
+
+    unique_splits = sorted(set(split_indices))
+    pieces: list[Turn] = []
+    prev_i = 0
+    for s_i in unique_splits + [len(words)]:
+        chunk = words[prev_i:s_i]
+        if chunk:
+            pieces.append(
+                Turn(
+                    speaker=turn.speaker,
+                    start=chunk[0].start,
+                    end=chunk[-1].end,
+                    text=_join_word_texts(chunk),
+                    words=chunk,
+                )
+            )
+        prev_i = s_i
+    return pieces or [turn]
+
+
 def merge_dual_channel_turns(
     mic_turns: list[Turn],
     remote_turns: list[Turn],
     pause_threshold: float = 2.0,
 ) -> list[Turn]:
-    """Chronologically interleave 'Me' turns and 'Other' turns, merging consecutive same-speaker turns."""
-    combined = sorted(mic_turns + remote_turns, key=lambda t: (t.start, t.end))
+    """Chronologically interleave 'Me' turns and 'Other' turns, splitting long turns around interjections."""
+    mic_starts = [t.start for t in mic_turns]
+    remote_starts = [t.start for t in remote_turns]
+
+    split_remote: list[Turn] = []
+    for rt in remote_turns:
+        cuts = [ts for ts in mic_starts if rt.start + 0.4 < ts < rt.end - 0.4]
+        split_remote.extend(_split_turn_at_timestamps(rt, cuts))
+
+    split_mic: list[Turn] = []
+    for mt in mic_turns:
+        cuts = [ts for ts in remote_starts if mt.start + 0.4 < ts < mt.end - 0.4]
+        split_mic.extend(_split_turn_at_timestamps(mt, cuts))
+
+    combined = sorted(split_mic + split_remote, key=lambda t: (t.start, t.end))
     if not combined:
         return []
 
@@ -162,7 +444,7 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
             duration_seconds = max(mic_dur, sys_dur)
 
             # Stage 1: Transcribe Mic ('Me')
-            mic_turns: list[Turn] = []
+            mic_segs: list[ASRSegment] = []
             if mic_wav is not None and mic_dur > 0.2:
                 _report(15.0, f"Transcribing your mic ({config.model_size})", "Channel 1: Me")
                 with timed_stage(f"[Dual 1/4] ASR Mic ('Me') — {effective_asr}/{config.model_size}"):
@@ -176,12 +458,10 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
                         asr_backend=effective_asr,
                         align_mode=config.align_mode,
                     )
-                mic_turns = _segments_to_single_speaker_turns(
-                    mic_segs, "Me", pause_threshold=config.pause_threshold
-                )
                 release_memory()
 
             # Stage 2: Transcribe System Audio ('Other' or 'Other 1..N')
+            sys_segs: list[ASRSegment] = []
             remote_turns: list[Turn] = []
             if sys_wav is not None and sys_dur > 0.2:
                 _report(45.0, f"Transcribing remote audio ({config.model_size})", "Channel 2: Other")
@@ -223,6 +503,20 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
                     remote_turns = _segments_to_single_speaker_turns(
                         sys_segs, "Other", pause_threshold=config.pause_threshold
                     )
+
+            # Stage 2c: Suppress speaker-to-mic acoustic echo before building 'Me' turns
+            if mic_segs and sys_segs:
+                mic_segs = suppress_mic_echo_segments(mic_segs, sys_segs)
+
+            mic_turns: list[Turn] = []
+            if mic_segs:
+                # Build separate turns per surviving segment so 'Other' turns interleave cleanly
+                # even when the user replied immediately after remote speech.
+                for seg in mic_segs:
+                    seg_turns = _segments_to_single_speaker_turns(
+                        [seg], "Me", pause_threshold=config.pause_threshold
+                    )
+                    mic_turns.extend(seg_turns)
 
             # Stage 3: Interleave chronologically
             turns = merge_dual_channel_turns(
@@ -267,8 +561,8 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
             # Stage 5: Optional AI Summary
             ai_summary_text: Optional[str] = None
             if config.publish_summary and turns and not config.append_mode:
-                _report(92.0, "Generating AI summary (Local Qwen 7B)", "Summarizing call")
-                with timed_stage("[Dual 4/4] Local AI summary (Qwen 7B)"):
+                _report(92.0, "Generating AI summary (Local Qwen3 4B)", "Summarizing call")
+                with timed_stage("[Dual 4/4] Local AI summary (Qwen3 4B)"):
                     ai_summary_text = summarize_transcript(
                         turns=turns,
                         model_dir=model_dir,

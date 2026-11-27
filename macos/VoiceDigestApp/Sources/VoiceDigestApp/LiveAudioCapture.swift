@@ -88,11 +88,13 @@ enum SessionStorage {
 final class PCM16MonoWAVWriter {
     private let lock = NSLock()
     private let targetRate: Double = 16_000.0
+    private let wallClockOrigin: CFAbsoluteTime?
     private var fileHandle: FileHandle?
     private(set) var framesWritten: Int64 = 0
     private var dataBytesWritten: UInt32 = 0
 
-    init(outputURL: URL) throws {
+    init(outputURL: URL, wallClockOrigin: CFAbsoluteTime? = nil) throws {
+        self.wallClockOrigin = wallClockOrigin
         FileManager.default.createFile(atPath: outputURL.path, contents: nil)
         let handle = try FileHandle(forWritingTo: outputURL)
         // Write placeholder 44-byte RIFF WAV header (finalized with exact sizes on close)
@@ -181,6 +183,30 @@ final class PCM16MonoWAVWriter {
         defer { lock.unlock() }
         guard let handle = fileHandle else { return }
         do {
+            // Keep system.wav locked to the same wall-clock timeline as mic.wav:
+            // macOS Core Audio Process Tap pauses IOProc callbacks when system audio is idle/paused.
+            if let origin = wallClockOrigin {
+                let elapsed = max(0.0, CFAbsoluteTimeGetCurrent() - origin)
+                let expectedStartFrame = Int64(elapsed * targetRate) - Int64(outCount)
+                let gapFrames = expectedStartFrame - framesWritten
+                // Pad gaps > 100 ms with digital silence (cap per callback at 30 min defensively)
+                if gapFrames > 1_600 && gapFrames < Int64(1_800 * targetRate) {
+                    var remainingBytes = Int(gapFrames) * MemoryLayout<Int16>.size
+                    let zeroChunk = Data(count: min(remainingBytes, 65_536))
+                    while remainingBytes > 0 {
+                        let toWrite = min(remainingBytes, zeroChunk.count)
+                        if toWrite == zeroChunk.count {
+                            try handle.write(contentsOf: zeroChunk)
+                        } else {
+                            try handle.write(contentsOf: zeroChunk.prefix(toWrite))
+                        }
+                        remainingBytes -= toWrite
+                    }
+                    framesWritten += gapFrames
+                    dataBytesWritten &+= UInt32(Int(gapFrames) * MemoryLayout<Int16>.size)
+                }
+            }
+
             try handle.write(contentsOf: data)
             framesWritten += Int64(outCount)
             dataBytesWritten &+= UInt32(byteCount)
@@ -252,7 +278,8 @@ final class DualAudioRecorder {
     private(set) var isRecording: Bool = false
     private(set) var systemAudioActive: Bool = false
 
-    /// Probe macOS 14.2+ Core Audio Process Tap to trigger authorization (if needed) and verify capture works.
+    /// Probe macOS 14.2+ Core Audio Process Tap (including Aggregate Device + AudioDeviceStart)
+    /// so macOS actually triggers the System Audio Recording permission prompt during Verify.
     static func probeSystemAudioTap() -> (granted: Bool, message: String) {
         if #available(macOS 14.2, *) {
             let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
@@ -262,11 +289,61 @@ final class DualAudioRecorder {
 
             var tapID: AudioObjectID = kAudioObjectUnknown
             let status = AudioHardwareCreateProcessTap(tapDesc, &tapID)
-            if status == noErr, tapID != kAudioObjectUnknown {
-                AudioHardwareDestroyProcessTap(tapID)
-                return (true, "System audio tap verified and ready.")
+            guard status == noErr, tapID != kAudioObjectUnknown else {
+                return (false, "Grant System Audio Recording permission (OSStatus \(status)), then click Verify again.")
             }
-            return (false, "Grant System Audio Recording permission (OSStatus \(status)), then click Verify again.")
+            defer { AudioHardwareDestroyProcessTap(tapID) }
+
+            var tapUUIDRef: Unmanaged<CFString>?
+            var uuidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            var uuidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioTapPropertyUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let uuidStatus = AudioObjectGetPropertyData(tapID, &uuidAddr, 0, nil, &uuidSize, &tapUUIDRef)
+            guard uuidStatus == noErr, let tapUID = tapUUIDRef?.takeRetainedValue() as String? else {
+                return (false, "Could not inspect Core Audio tap (OSStatus \(uuidStatus)).")
+            }
+
+            let aggUID = "com.voicedigest.tap.probe.\(UUID().uuidString)"
+            let aggDesc: [String: Any] = [
+                kAudioAggregateDeviceNameKey as String: "VoiceDigestTapProbeDevice",
+                kAudioAggregateDeviceUIDKey as String: aggUID,
+                kAudioAggregateDeviceIsPrivateKey as String: true,
+                kAudioAggregateDeviceIsStackedKey as String: false,
+                kAudioAggregateDeviceTapAutoStartKey as String: true,
+                kAudioAggregateDeviceTapListKey as String: [
+                    [
+                        kAudioSubTapUIDKey as String: tapUID,
+                        kAudioSubTapDriftCompensationKey as String: true
+                    ]
+                ]
+            ]
+
+            var aggID: AudioObjectID = kAudioObjectUnknown
+            let aggStatus = AudioHardwareCreateAggregateDevice(aggDesc as CFDictionary, &aggID)
+            guard aggStatus == noErr, aggID != kAudioObjectUnknown else {
+                return (false, "Could not create Core Audio probe device (OSStatus \(aggStatus)).")
+            }
+            defer { AudioHardwareDestroyAggregateDevice(aggID) }
+
+            var ioProcID: AudioDeviceIOProcID?
+            let queue = DispatchQueue(label: "com.voicedigest.tap.probe.io", qos: .utility)
+            let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggID, queue) { _, _, _, _, _ in }
+            guard ioStatus == noErr, let procID = ioProcID else {
+                return (false, "Could not attach Core Audio probe IOProc (OSStatus \(ioStatus)).")
+            }
+            defer { AudioDeviceDestroyIOProcID(aggID, procID) }
+
+            // Starting the device is what actually triggers macOS's System Audio Recording dialog
+            let startStatus = AudioDeviceStart(aggID, procID)
+            guard startStatus == noErr else {
+                return (false, "Grant System Audio Recording permission (OSStatus \(startStatus)), then click Verify again.")
+            }
+            Thread.sleep(forTimeInterval: 0.15)
+            AudioDeviceStop(aggID, procID)
+            return (true, "System audio tap verified and ready.")
         } else {
             return (false, "System audio capture requires macOS 14.2 or later.")
         }
@@ -319,11 +396,12 @@ final class DualAudioRecorder {
 
         let newSession = try SessionStorage.createSession()
         do {
-            let sWriter = try PCM16MonoWAVWriter(outputURL: newSession.systemWAVURL)
+            try startMicrophoneCapture(outputURL: newSession.micWAVURL)
+            let syncOrigin = CFAbsoluteTimeGetCurrent()
+            let sWriter = try PCM16MonoWAVWriter(outputURL: newSession.systemWAVURL, wallClockOrigin: syncOrigin)
             self.sysWriter = sWriter
             self.session = newSession
 
-            try startMicrophoneCapture(outputURL: newSession.micWAVURL)
             if #available(macOS 14.2, *) {
                 do {
                     try startSystemAudioTap(writer: sWriter)

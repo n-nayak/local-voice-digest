@@ -37,6 +37,8 @@ final class LiveCaptureViewModel: ObservableObject {
 
     @Published var jobs: [BackgroundJobStatus] = []
     @Published var tempBytes: Int64 = 0
+    @Published var systemAudioVerified: Bool? = nil
+    @Published var isVerifyingSystemAudio: Bool = false
 
     private let recorder = DualAudioRecorder()
     private var activeSession: CaptureSession?
@@ -71,6 +73,23 @@ final class LiveCaptureViewModel: ObservableObject {
 
     func refreshTempUsage() {
         tempBytes = SessionStorage.currentTempBytes()
+    }
+
+    func verifySystemAudio() {
+        guard !isVerifyingSystemAudio else { return }
+        isVerifyingSystemAudio = true
+        Task.detached(priority: .userInitiated) {
+            let result = DualAudioRecorder.probeSystemAudioTap()
+            await MainActor.run { [weak self] in
+                self?.isVerifyingSystemAudio = false
+                self?.systemAudioVerified = result.granted
+                if !result.granted {
+                    self?.systemAudioWarning = result.message
+                } else {
+                    self?.systemAudioWarning = nil
+                }
+            }
+        }
     }
 
     func clearTempFiles() {
