@@ -140,6 +140,12 @@ python -m unittest discover -s tests -v
 
 ---
 
+## Legal & Recording Consent Notice
+
+VoiceDigest is an on-device application designed for local audio transcription and note-taking. You are solely responsible for complying with all applicable laws regarding audio recording and participant consent as well as any workplace NDA policies before capturing live calls.
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
