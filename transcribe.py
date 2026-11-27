@@ -17,7 +17,7 @@ if "--download-models" not in sys.argv[1:]:
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["DO_NOT_TRACK"] = "1"
 
-from local_transcribe.cli import main
+from voice_digest.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

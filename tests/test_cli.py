@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from local_transcribe.audio import TARGET_SAMPLE_RATE
-from local_transcribe.cli import default_output_path, main, prompt_speaker_count
-from local_transcribe.types import ASRSegment, DiarizationSegment, Word
+from voice_digest.audio import TARGET_SAMPLE_RATE
+from voice_digest.cli import default_output_path, main, prompt_speaker_count
+from voice_digest.types import ASRSegment, DiarizationSegment, Word
 from tests.test_audio import write_synthetic_wav
 
 
@@ -75,9 +75,9 @@ class TestCLI(unittest.TestCase):
             ]
 
             with (
-                mock.patch("local_transcribe.audio.transcode_to_wav", side_effect=fake_transcode),
-                mock.patch("local_transcribe.pipeline.transcribe_and_align", return_value=fake_asr),
-                mock.patch("local_transcribe.pipeline.diarize_audio", return_value=fake_diar),
+                mock.patch("voice_digest.audio.transcode_to_wav", side_effect=fake_transcode),
+                mock.patch("voice_digest.pipeline.transcribe_and_align", return_value=fake_asr),
+                mock.patch("voice_digest.pipeline.diarize_audio", return_value=fake_diar),
             ):
                 # Press Enter at interactive speaker prompt -> defaults to 2
                 rc = main(
@@ -116,9 +116,9 @@ class TestCLI(unittest.TestCase):
             fake_diar = [DiarizationSegment(0.0, 1.1, "SPEAKER_00")]
 
             with (
-                mock.patch("local_transcribe.audio.transcode_to_wav", side_effect=fake_transcode),
-                mock.patch("local_transcribe.pipeline.transcribe_and_align", return_value=fake_asr) as m_asr,
-                mock.patch("local_transcribe.pipeline.diarize_audio", return_value=fake_diar) as m_diar,
+                mock.patch("voice_digest.audio.transcode_to_wav", side_effect=fake_transcode),
+                mock.patch("voice_digest.pipeline.transcribe_and_align", return_value=fake_asr) as m_asr,
+                mock.patch("voice_digest.pipeline.diarize_audio", return_value=fake_diar) as m_diar,
             ):
                 rc1 = main([str(m4a), "--speakers", "2", "--cache-dir", str(cache_dir), "--output", str(out_txt)])
                 rc2 = main([str(m4a), "--speakers", "2", "--cache-dir", str(cache_dir), "--prosody", "--no-ser", "--output", str(out_txt)])

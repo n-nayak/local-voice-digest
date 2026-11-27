@@ -6,15 +6,15 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from local_transcribe.compat import apply_torch_compat
-from local_transcribe.models import (
+from voice_digest.compat import apply_torch_compat
+from voice_digest.models import (
     DeviceConfig,
     is_mlx_available,
     mlx_whisper_model_path,
     release_memory,
     whisper_model_path,
 )
-from local_transcribe.types import ASRSegment, Word
+from voice_digest.types import ASRSegment, Word
 
 logger = logging.getLogger(__name__)
 

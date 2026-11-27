@@ -10,7 +10,7 @@ import wave
 from pathlib import Path
 from unittest import mock
 
-from local_transcribe.audio import (
+from voice_digest.audio import (
     TARGET_SAMPLE_RATE,
     AudioValidationError,
     get_wav_duration,
@@ -76,7 +76,7 @@ class TestAudioModule(unittest.TestCase):
                 return out_wav
 
             created_wav: Path | None = None
-            with mock.patch("local_transcribe.audio.transcode_to_wav", side_effect=fake_transcode):
+            with mock.patch("voice_digest.audio.transcode_to_wav", side_effect=fake_transcode):
                 with temporary_wav(m4a_path) as (wav_path, duration):
                     created_wav = wav_path
                     self.assertTrue(wav_path.exists())

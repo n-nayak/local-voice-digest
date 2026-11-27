@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "local-audio-transcribe"
-version = "0.1.0"
+name = "voice-digest"
+version = "0.3.0"
 description = "100% local, privacy-preserving CLI for long-form .m4a transcription, speaker diarization, and acoustic/prosodic analysis."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,7 @@ sherpa = [
 mlx = [
     "mlx-whisper>=0.4.0",
     "mlx-lm>=0.20.0",
+    "parakeet-mlx>=0.3.0",
     "sherpa-onnx>=1.10.0",
 ]
 dev = [
@@ -46,14 +47,15 @@ all = [
     "sherpa-onnx>=1.10.0",
     "mlx-whisper>=0.4.0",
     "mlx-lm>=0.20.0",
+    "parakeet-mlx>=0.3.0",
     "pytest>=8.0.0",
 ]
 
 [project.scripts]
-local-transcribe = "local_transcribe.cli:main"
+voice-digest = "voice_digest.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["local_transcribe*"]
+include = ["voice_digest*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

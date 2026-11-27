@@ -1,9 +1,10 @@
+import AppKit
 import AudioToolbox
 import AVFoundation
 import CoreAudio
 import Foundation
 
-/// Unique per-call temporary session folder under ~/Library/Caches/LocalTranscribe/sessions/.
+/// Unique per-call temporary session folder under ~/Library/Caches/VoiceDigest/sessions/.
 struct CaptureSession: Identifiable, Hashable {
     let id: String
     let startedAt: Date
@@ -202,7 +203,7 @@ final class PCM16MonoWAVWriter {
         fileHandle = nil
     }
 
-    private static func makeWAVHeader(dataBytes: UInt32, sampleRate: UInt32) -> Data {
+    static func makeWAVHeader(dataBytes: UInt32, sampleRate: UInt32) -> Data {
         var header = Data(capacity: 44)
         let channels: UInt16 = 1
         let bitsPerSample: UInt16 = 16
@@ -251,6 +252,46 @@ final class DualAudioRecorder {
     private(set) var isRecording: Bool = false
     private(set) var systemAudioActive: Bool = false
 
+    /// Probe macOS 14.2+ Core Audio Process Tap to trigger authorization (if needed) and verify capture works.
+    static func probeSystemAudioTap() -> (granted: Bool, message: String) {
+        if #available(macOS 14.2, *) {
+            let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+            tapDesc.name = "VoiceDigestTapProbe"
+            tapDesc.isPrivate = true
+            tapDesc.muteBehavior = .unmuted
+
+            var tapID: AudioObjectID = kAudioObjectUnknown
+            let status = AudioHardwareCreateProcessTap(tapDesc, &tapID)
+            if status == noErr, tapID != kAudioObjectUnknown {
+                AudioHardwareDestroyProcessTap(tapID)
+                return (true, "System audio tap verified and ready.")
+            }
+            return (false, "Grant System Audio Recording permission (OSStatus \(status)), then click Verify again.")
+        } else {
+            return (false, "System audio capture requires macOS 14.2 or later.")
+        }
+    }
+
+    static func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"),
+           NSWorkspace.shared.open(url) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    static func openSystemAudioSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture"),
+           NSWorkspace.shared.open(url) {
+            return
+        }
+        if let fallback = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"),
+           NSWorkspace.shared.open(fallback) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
     /// Ensure macOS microphone permission is explicitly requested and granted before capturing.
     static func ensureMicrophonePermission() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -271,7 +312,7 @@ final class DualAudioRecorder {
 
     func startRecording() throws -> CaptureSession {
         guard !isRecording else {
-            throw NSError(domain: "LocalTranscribe", code: 2, userInfo: [
+            throw NSError(domain: "VoiceDigest", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "A recording session is already in progress."
             ])
         }
@@ -372,14 +413,14 @@ final class DualAudioRecorder {
     private func startSystemAudioTap(writer: PCM16MonoWAVWriter) throws {
         // 1. Create a global system-audio process tap (stereo, non-muted)
         let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        tapDesc.name = "LocalTranscribeSystemTap"
+        tapDesc.name = "VoiceDigestSystemTap"
         tapDesc.isPrivate = true
         tapDesc.muteBehavior = .unmuted
 
         var createdTapID: AudioObjectID = kAudioObjectUnknown
         let tapStatus = AudioHardwareCreateProcessTap(tapDesc, &createdTapID)
         guard tapStatus == noErr, createdTapID != kAudioObjectUnknown else {
-            throw NSError(domain: "LocalTranscribe", code: Int(tapStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(tapStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Failed to create Core Audio system tap (OSStatus \(tapStatus)). Grant System Audio Recording permission in System Settings."
             ])
         }
@@ -396,15 +437,15 @@ final class DualAudioRecorder {
         let uuidStatus = AudioObjectGetPropertyData(createdTapID, &uuidAddr, 0, nil, &uuidSize, &tapUUIDRef)
         guard uuidStatus == noErr, let tapUID = tapUUIDRef?.takeRetainedValue() as String? else {
             stopSystemAudioTap()
-            throw NSError(domain: "LocalTranscribe", code: Int(uuidStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(uuidStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Could not read Core Audio tap UID."
             ])
         }
 
         // 3. Wrap the tap in a private Aggregate Device so we can attach an IOProc
-        let aggUID = "com.localtranscribe.tap.aggregate.\(UUID().uuidString)"
+        let aggUID = "com.voicedigest.tap.aggregate.\(UUID().uuidString)"
         let aggDesc: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "LocalTranscribeTapDevice",
+            kAudioAggregateDeviceNameKey as String: "VoiceDigestTapDevice",
             kAudioAggregateDeviceUIDKey as String: aggUID,
             kAudioAggregateDeviceIsPrivateKey as String: true,
             kAudioAggregateDeviceIsStackedKey as String: false,
@@ -421,7 +462,7 @@ final class DualAudioRecorder {
         let aggStatus = AudioHardwareCreateAggregateDevice(aggDesc as CFDictionary, &createdAggID)
         guard aggStatus == noErr, createdAggID != kAudioObjectUnknown else {
             stopSystemAudioTap()
-            throw NSError(domain: "LocalTranscribe", code: Int(aggStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(aggStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Failed to create private aggregate device (OSStatus \(aggStatus))."
             ])
         }
@@ -439,14 +480,14 @@ final class DualAudioRecorder {
         guard fmtStatus == noErr,
               let inputFormat = AVAudioFormat(streamDescription: &streamDesc) else {
             stopSystemAudioTap()
-            throw NSError(domain: "LocalTranscribe", code: Int(fmtStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(fmtStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Failed to read system audio tap stream format."
             ])
         }
 
         // 5. Register IOProc block to stream incoming system audio buffers into system.wav
         var createdIOProcID: AudioDeviceIOProcID?
-        let queue = DispatchQueue(label: "com.localtranscribe.systemtap.io", qos: .utility)
+        let queue = DispatchQueue(label: "com.voicedigest.systemtap.io", qos: .utility)
         let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&createdIOProcID, createdAggID, queue) { _, inInputData, _, _, _ in
             let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
             guard let first = abl.first, first.mDataByteSize > 0 else { return }
@@ -469,7 +510,7 @@ final class DualAudioRecorder {
         }
         guard ioStatus == noErr, let procID = createdIOProcID else {
             stopSystemAudioTap()
-            throw NSError(domain: "LocalTranscribe", code: Int(ioStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(ioStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Failed to register system audio IOProc (OSStatus \(ioStatus))."
             ])
         }
@@ -478,7 +519,7 @@ final class DualAudioRecorder {
         let startStatus = AudioDeviceStart(createdAggID, procID)
         guard startStatus == noErr else {
             stopSystemAudioTap()
-            throw NSError(domain: "LocalTranscribe", code: Int(startStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(startStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Failed to start system audio capture (OSStatus \(startStatus))."
             ])
         }

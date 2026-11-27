@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from local_transcribe.audio import TARGET_SAMPLE_RATE
-from local_transcribe.cli import main
-from local_transcribe.dual_channel import merge_dual_channel_turns
-from local_transcribe.types import ASRSegment, Turn, Word
+from voice_digest.audio import TARGET_SAMPLE_RATE
+from voice_digest.cli import main
+from voice_digest.dual_channel import merge_dual_channel_turns
+from voice_digest.types import ASRSegment, Turn, Word
 from tests.test_audio import write_synthetic_wav
 
 
@@ -49,8 +49,8 @@ class TestDualChannelPipeline(unittest.TestCase):
                 return ([ASRSegment("Hello from remote.", 1.2, 2.4, [Word("Hello", 1.2, 1.6), Word("from", 1.65, 1.9), Word("remote.", 1.95, 2.4)])], "en")
 
             with (
-                mock.patch("local_transcribe.audio.transcode_to_wav", side_effect=fake_transcode),
-                mock.patch("local_transcribe.dual_channel.transcribe_and_align", side_effect=fake_asr),
+                mock.patch("voice_digest.audio.transcode_to_wav", side_effect=fake_transcode),
+                mock.patch("voice_digest.dual_channel.transcribe_and_align", side_effect=fake_asr),
             ):
                 rc = main([
                     "--mic-file", str(mic_wav),
@@ -72,7 +72,7 @@ class TestDualChannelPipeline(unittest.TestCase):
             write_synthetic_wav(mic_wav, [0.0] * (2 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
             write_synthetic_wav(sys_wav, [0.0] * (2 * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
 
-            with mock.patch("local_transcribe.dual_channel.transcribe_and_align") as m_asr:
+            with mock.patch("voice_digest.dual_channel.transcribe_and_align") as m_asr:
                 rc = main([
                     "--mic-file", str(mic_wav),
                     "--system-file", str(sys_wav),

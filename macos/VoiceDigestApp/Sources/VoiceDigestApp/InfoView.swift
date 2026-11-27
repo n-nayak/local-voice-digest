@@ -28,16 +28,40 @@ struct InfoView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    privacyBannerSection
                     settingsExplainedSection
                     supportedFormatsSection
                     modelsTableSection
                     enginesSection
-                    privacySection
                 }
                 .padding(20)
             }
         }
-        .frame(width: 600, height: 600)
+        .frame(width: 600, height: 640)
+    }
+
+    private var privacyBannerSection: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield.fill")
+                .font(.title2)
+                .foregroundStyle(Color.green)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("100% Private — Never Leaves Your Mac")
+                    .font(.headline)
+                Text("Everything you record, dictate, or transcribe is processed entirely on your laptop. Your voice, calls, and text are never uploaded to the cloud, sent to external servers, or shared with any AI company.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.green.opacity(0.35), lineWidth: 1)
+        )
     }
 
     private var settingsExplainedSection: some View {
@@ -62,20 +86,20 @@ struct InfoView: View {
                 "Many phone, Zoom, and laptop recordings are very quiet (-40 dBFS), which makes speech and speaker detection less reliable. EBU R128 normalization boosts speech to a consistent level without amplifying silence. Recommended target: -16 LUFS for calls/podcasts (-14 LUFS louder, -20 LUFS softer)."
             )
             infoBullet(
-                "AI Speaker Repair (Local Qwen 7B):",
-                "Acoustic diarization alone can confuse short back-and-forth exchanges (like greetings or quick Q&A). Enabling this runs a local 7B LLM (Qwen2.5-7B-Instruct 4-bit, ~4.3 GB on disk, ~5 GB GPU RAM) strictly offline to reassign speaker labels using conversational logic—without altering a single transcribed word or timestamp."
+                "AI Speaker Repair (Local Qwen3 4B):",
+                "Acoustic diarization alone can confuse short back-and-forth exchanges (like greetings or quick Q&A). Enabling this runs a local 4B LLM (Qwen3-4B-Instruct 4-bit, ~2.3 GB on disk, ~3 GB GPU RAM) strictly offline to reassign speaker labels using conversational logic—without altering a single transcribed word or timestamp."
             )
             infoBullet(
-                "Publish AI Summary (Local Qwen 7B):",
-                "Generates a concise AI summary at the top of your transcript file (=== AI SUMMARY ===) using the same local Qwen 7B model. Optionally enter up to 160 characters to guide the focus (e.g., 'Action items and TODOs', 'Key podcast insights', or 'Rate the interview'). Long recordings (1–3+ hours) are automatically summarized via map-reduce chunking so they never overflow the context window."
+                "Publish AI Summary (Local Qwen3 4B):",
+                "Generates a concise AI summary at the top of your transcript file (=== AI SUMMARY ===) using the same local Qwen3 4B model. Optionally enter up to 160 characters to guide the focus (e.g., 'Action items and TODOs', 'Key podcast insights', or 'Rate the interview'). Long recordings (1–3+ hours) are automatically summarized via map-reduce chunking so they never overflow the context window."
+            )
+            infoBullet(
+                "System-Wide Dictation (Parakeet v3 + Qwen3 1.7B):",
+                "Hold your chosen modifier hotkey (e.g., Right Option ⌥ or ⌃⌥) in any Mac app to see live preview text in the floating pill and auto-paste clean text in <500 ms (press Esc to cancel). Uses a warm Parakeet TDT 0.6B v3 speech model plus an optional Qwen3 1.7B cleanup pass that removes fillers ('um/uh'), repeated words, and self-corrections using your active app title and Personal Dictionary. You can also enable optional chunk pasting on pauses or sentence endings, and pre-download all models or verify permissions anytime from Settings."
             )
             infoBullet(
                 "Acoustic & Prosody Analysis:",
-                "Adds a Session Acoustic Summary and inline tags ([pace: WPM | disfluency | state]) measuring speaking speed, mid-clause silent blocks (0.4s–1.5s), prolongations, and vocal stress markers—purely from audio acoustics, without flagging lexical filler words like 'um' or 'uh'."
-            )
-            infoBullet(
-                "Fast DSP-only Prosody:",
-                "Uses openSMILE + signal-processing stress features only (~5–10s) and skips the heavier neural SpeechBrain emotion classifier (~2 min). Recommended for long recordings."
+                "Adds a Session Acoustic Summary and inline tags ([pace: WPM | disfluency | state]) measuring speaking speed, mid-clause silent blocks (0.4s–1.5s), prolongations, and vocal stress markers using fast openSMILE + DSP signal processing—purely from audio acoustics, without flagging lexical filler words like 'um' or 'uh'."
             )
             infoBullet(
                 "Output Folder:",
@@ -132,6 +156,9 @@ struct InfoView: View {
                 modelRow("Medium", "~1.5 GB", "~1.8 GB", "Strong accuracy on accents/jargon")
                 modelRow("Turbo", "~1.6 GB", "~2.0 GB", "Recommended — fast + near large-v3 quality")
                 modelRow("Large v3", "~3.0 GB", "~3.5 GB", "Highest accuracy, slowest")
+                modelRow("Parakeet v3", "~1.2 GB", "~1.4 GB", "System-wide dictation (<500 ms)")
+                modelRow("Qwen3 1.7B", "~1.0 GB", "~1.3 GB", "Fast dictation cleanup (fillers/edits)")
+                modelRow("Qwen3 4B", "~2.3 GB", "~3.0 GB", "Meeting speaker repair & AI summaries")
             }
             .padding(10)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -166,23 +193,21 @@ struct InfoView: View {
                 "Diarization (literally 'diary-zation'—logging who spoke when) splits audio into speech segments, computes an English VoxCeleb voiceprint per segment using WeSpeaker ResNet34-LM, clusters them into N speakers, and applies sentence-boundary majority smoothing so sentences are never torn mid-clause across two speakers (~32 MB total, zero HF token)."
             )
             infoBullet(
-                "4. Optional Semantic Speaker Repair — Local MLX LLM (Qwen2.5-7B-Instruct 4-bit):",
-                "When enabled, runs a 4-bit quantized 7B language model natively on your Apple Silicon GPU via mlx-lm. It reads numbered sentences in overlapping chunks and outputs only corrected speaker IDs (JSON), fixing rapid Q&A / greeting swaps while preserving every word and timestamp verbatim."
+                "4. Optional Semantic Speaker Repair & Summaries — Local MLX LLM (Qwen3-4B-Instruct 4-bit):",
+                "When enabled, runs a 4-bit quantized Qwen3 4B language model (non-thinking mode) natively on your Apple Silicon GPU via mlx-lm. For speaker repair it outputs only corrected speaker IDs (JSON) while preserving every word and timestamp verbatim; for summaries it automatically map-reduces 1–3+ hour calls."
             )
             infoBullet(
-                "5. Acoustic & Prosody Analysis — openSMILE + Optional SpeechBrain SER:",
+                "5. System-Wide Dictation — Parakeet TDT 0.6B v3 + Qwen3-1.7B 4-bit:",
+                "When Dictation is turned on, a warm local background worker keeps NVIDIA's open-weight Parakeet v3 (FastConformer TDT on MLX) and Qwen3-1.7B loaded in memory for <500 ms paste latency. Turning Dictation off unloads the models immediately to free RAM."
+            )
+            infoBullet(
+                "6. Acoustic & Prosody Analysis — openSMILE + Optional SpeechBrain SER:",
                 "Plain text loses how something was said. openSMILE extracts eGeMAPS vocal biomarkers (pitch, pitch jitter, spectral flux) alongside timestamp-based speaking pace (WPM) and mid-clause hesitation blocks. Optionally, SpeechBrain's wav2vec2 Speech Emotion Recognition (SER) model scores vocal tension in 8-second windows."
             )
-        }
-    }
-
-    private var privacySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Privacy & Offline Execution")
-                .font(.headline)
-            Text("After the one-time download of public open-weight models, all audio decoding, transcription, diarization, and prosody analysis run 100% locally on your Mac. Outbound network sockets and Hugging Face telemetry are actively blocked during transcription.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            infoBullet(
+                "7. Technical Air-Gap Enforcement:",
+                "After the one-time download of public open-weight models (zero login or API keys), outbound network sockets and Hugging Face telemetry are actively blocked in Python during every transcription and dictation run."
+            )
         }
     }
 

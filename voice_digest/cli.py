@@ -8,15 +8,17 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from local_transcribe.dual_channel import DualChannelConfig, run_dual_channel_pipeline
-from local_transcribe.formatter import VALID_METADATA_MODES
-from local_transcribe.models import (
+from voice_digest.dictation import run_dictation_daemon
+from voice_digest.dual_channel import DualChannelConfig, run_dual_channel_pipeline
+from voice_digest.formatter import VALID_METADATA_MODES
+from voice_digest.models import (
     DEFAULT_WHISPER_MODEL,
     SUPPORTED_WHISPER_MODELS,
     download_all_models,
+    download_dictation_models,
 )
-from local_transcribe.offline import enforce_offline_environment
-from local_transcribe.pipeline import PipelineConfig, run_transcription_pipeline
+from voice_digest.offline import enforce_offline_environment
+from voice_digest.pipeline import PipelineConfig, run_transcription_pipeline
 
 DEFAULT_SPEAKERS = 2
 
@@ -155,18 +157,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--llm-repair",
         action="store_true",
-        help="Run a local MLX LLM (Qwen2.5-7B-4bit) pass to repair conversational speaker-label swaps.",
+        help="Run a local MLX LLM (Qwen3-4B-Instruct-4bit) pass to repair conversational speaker-label swaps.",
     )
     parser.add_argument(
         "--summary",
         action="store_true",
-        help="Generate a local AI summary (Qwen2.5-7B-4bit) at the top of the output transcript.",
+        help="Generate a local AI summary (Qwen3-4B-Instruct-4bit) at the top of the output transcript.",
     )
     parser.add_argument(
         "--summary-focus",
         type=str,
         default=None,
         help="Optional focus instruction (up to 160 chars) for --summary, e.g. 'Key takeaways and TODOs'.",
+    )
+    parser.add_argument(
+        "--dictation-models",
+        action="store_true",
+        help="With --download-models: download only the public system-wide dictation models (Parakeet v3 + Qwen3-1.7B).",
+    )
+    parser.add_argument(
+        "--include-dictation",
+        action="store_true",
+        help="With --download-models: also download the system-wide dictation models alongside transcription/LLM models.",
+    )
+    parser.add_argument(
+        "--dictation-daemon",
+        action="store_true",
+        help="Run a warm persistent JSON-RPC stdin/stdout daemon for <500ms system-wide dictation.",
+    )
+    parser.add_argument(
+        "--no-dictation-llm",
+        action="store_true",
+        help="With --dictation-daemon or --dictation-models: skip loading/downloading the Qwen3-1.7B cleanup LLM.",
     )
     parser.add_argument(
         "--json-progress",
@@ -248,16 +270,23 @@ def main(
 
     if args.download_models:
         try:
-            download_all_models(
-                model_dir=args.model_dir,
-                model_size=args.model_size,
-                language=args.language or "en",
-                diarizer=args.diarizer,
-                include_prosody_ser=args.prosody,
-                hf_token=args.hf_token,
-                asr_backend=args.asr_backend,
-                include_llm_repair=args.llm_repair or args.summary,
-            )
+            if args.dictation_models:
+                download_dictation_models(
+                    model_dir=args.model_dir,
+                    include_llm=not args.no_dictation_llm,
+                )
+            else:
+                download_all_models(
+                    model_dir=args.model_dir,
+                    model_size=args.model_size,
+                    language=args.language or "en",
+                    diarizer=args.diarizer,
+                    include_prosody_ser=args.prosody,
+                    hf_token=args.hf_token,
+                    asr_backend=args.asr_backend,
+                    include_llm_repair=args.llm_repair or args.summary,
+                    include_dictation=args.include_dictation,
+                )
             return 0
         except Exception as exc:
             print(f"Error downloading models: {exc}", file=sys.stderr)
@@ -265,6 +294,12 @@ def main(
 
     # Enforce strict offline mode before running any inference
     enforce_offline_environment(args.model_dir)
+
+    if args.dictation_daemon:
+        return run_dictation_daemon(
+            model_dir=args.model_dir,
+            load_llm=not args.no_dictation_llm,
+        )
 
     # Dual-channel live call mode (--mic-file and/or --system-file)
     if args.mic_file is not None or args.system_file is not None:

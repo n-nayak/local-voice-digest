@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build LocalTranscribe.app and LocalTranscribe.dmg for macOS (Apple Silicon).
+# Build VoiceDigest.app and VoiceDigest.dmg for macOS (Apple Silicon).
 #
 # Usage:
 #   ./scripts/build_dmg.sh                  # Build SwiftUI .app + .dmg (uses local .venv in dev)
 #   ./scripts/build_dmg.sh --self-contained # Also bundle standalone Python backend + ffmpeg inside .app
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SWIFT_PKG="$ROOT_DIR/macos/LocalTranscribeApp"
+SWIFT_PKG="$ROOT_DIR/macos/VoiceDigestApp"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="VoiceDigest"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
@@ -58,14 +58,22 @@ if [ "$SELF_CONTAINED" = true ]; then
         --collect-all mlx \
         --collect-all mlx_whisper \
         --collect-all mlx_lm \
+        --collect-all parakeet_mlx \
         --collect-all sherpa_onnx \
         --collect-all opensmile \
         --collect-all soundfile \
         --exclude-module torch \
         --exclude-module torchaudio \
         --exclude-module whisperx \
+        --exclude-module faster_whisper \
+        --exclude-module ctranslate2 \
         --exclude-module pyannote \
         --exclude-module speechbrain \
+        --exclude-module pyarrow \
+        --exclude-module av \
+        --exclude-module matplotlib \
+        --exclude-module PIL \
+        --exclude-module onnxruntime \
         "$ROOT_DIR/transcribe.py"
 
     mkdir -p "$APP_BUNDLE/Contents/Resources/backend"

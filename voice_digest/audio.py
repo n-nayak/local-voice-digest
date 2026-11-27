@@ -189,7 +189,7 @@ def temporary_wav(
 ) -> Iterator[tuple[Path, float]]:
     """Validate input, transcode to a temporary 16 kHz mono WAV, and auto-clean on exit."""
     validated = validate_input_audio(input_path)
-    with tempfile.TemporaryDirectory(prefix="local_transcribe_") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="voice_digest_") as tmp_dir:
         wav_path = Path(tmp_dir) / "audio_16k_mono.wav"
         transcode_to_wav(
             validated,

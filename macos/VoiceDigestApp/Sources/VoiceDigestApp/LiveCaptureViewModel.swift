@@ -362,7 +362,7 @@ final class LiveCaptureViewModel: ObservableObject {
             fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx").path) &&
             fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx").path)
         )
-        let llmDir = modelDir.appendingPathComponent("llm/qwen2.5-7b-4bit")
+        let llmDir = modelDir.appendingPathComponent("llm/qwen3-4b-instruct-4bit")
         let hasLLM = !needLLM || ((try? fm.contentsOfDirectory(atPath: llmDir.path).isEmpty == false) ?? false)
         return !(hasMLX && hasSherpa && hasLLM)
     }
@@ -423,7 +423,7 @@ final class LiveCaptureViewModel: ObservableObject {
             let lastLine = stderrText.split(separator: "\n").map(String.init)
                 .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
                 ?? "Exited with code \(proc.terminationStatus)"
-            throw NSError(domain: "LocalTranscribe", code: Int(proc.terminationStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(proc.terminationStatus), userInfo: [
                 NSLocalizedDescriptionKey: lastLine
             ])
         }

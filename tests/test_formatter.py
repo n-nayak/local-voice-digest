@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from local_transcribe.formatter import format_transcript
-from local_transcribe.types import SessionSummary, SpeakerSummary, Turn, TurnProsody
+from voice_digest.formatter import format_transcript
+from voice_digest.types import SessionSummary, SpeakerSummary, Turn, TurnProsody
 
 
 class TestOutputFormatter(unittest.TestCase):
@@ -82,7 +82,7 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertIn("speaker 2 [pace: 192 WPM (fast) | disfluency: 2 blocks | state: tense]:", inline_only)
 
     def test_ai_summary_prepended_and_map_reduce_chunking(self) -> None:
-        from local_transcribe.llm_repair import _chunk_text_for_summary
+        from voice_digest.llm_repair import _chunk_text_for_summary
 
         out = format_transcript(
             self.turns,

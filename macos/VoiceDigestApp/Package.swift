@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "VoiceDigest",
-            path: "Sources/LocalTranscribeApp"
+            path: "Sources/VoiceDigestApp"
         )
     ]
 )

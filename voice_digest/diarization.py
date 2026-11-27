@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from local_transcribe.compat import apply_torch_compat
-from local_transcribe.models import (
+from voice_digest.compat import apply_torch_compat
+from voice_digest.models import (
     PYANNOTE_DIARIZATION_MODEL,
     SHERPA_EMB_FILENAME,
     DeviceConfig,
@@ -16,7 +16,7 @@ from local_transcribe.models import (
     release_memory,
     sherpa_model_path,
 )
-from local_transcribe.types import DiarizationSegment
+from voice_digest.types import DiarizationSegment
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def _load_wav_tensor(wav_path: Path) -> tuple[object, int]:
         waveform = torch.from_numpy(data.T.copy())
         return waveform, int(sr)
     except Exception:
-        from local_transcribe.audio import read_wav_segment
+        from voice_digest.audio import read_wav_segment
 
         samples, sr = read_wav_segment(wav_path, 0.0, 1e9)
         waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
@@ -183,7 +183,7 @@ def _diarize_sherpa_onnx(
 
         samples, sample_rate = sf.read(str(wav_path), dtype="float32", always_2d=False)
     except Exception:
-        from local_transcribe.audio import read_wav_segment
+        from voice_digest.audio import read_wav_segment
 
         samples, sample_rate = read_wav_segment(wav_path, 0.0, 1e9)
 

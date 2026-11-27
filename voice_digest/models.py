@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from local_transcribe.compat import apply_torch_compat
-from local_transcribe.offline import configure_model_cache_env
+from voice_digest.compat import apply_torch_compat
+from voice_digest.offline import configure_model_cache_env
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,13 @@ SHERPA_EMB_URL = (
 )
 SHERPA_EMB_FILENAME = "embedding_en_voxceleb.onnx"
 
-LLM_REPAIR_REPO_ID = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-LLM_REPAIR_DIRNAME = "qwen2.5-7b-4bit"
+LLM_REPAIR_REPO_ID = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+LLM_REPAIR_DIRNAME = "qwen3-4b-instruct-4bit"
+
+DICTATION_ASR_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
+DICTATION_ASR_DIRNAME = "parakeet-tdt-0.6b-v3"
+DICTATION_LLM_REPO_ID = "mlx-community/Qwen3-1.7B-4bit"
+DICTATION_LLM_DIRNAME = "qwen3-1.7b-4bit"
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,14 @@ def is_mlx_available() -> bool:
     return importlib.util.find_spec("mlx_whisper") is not None
 
 
+def is_parakeet_available() -> bool:
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return False
+    import importlib.util
+
+    return importlib.util.find_spec("parakeet_mlx") is not None
+
+
 def pyannote_model_path(model_dir: Path) -> Path:
     return model_dir / "pyannote"
 
@@ -163,6 +176,47 @@ def llm_repair_model_path(model_dir: Path) -> Path:
     return model_dir / "llm" / LLM_REPAIR_DIRNAME
 
 
+def dictation_asr_model_path(model_dir: Path) -> Path:
+    return model_dir / "dictation" / DICTATION_ASR_DIRNAME
+
+
+def dictation_llm_model_path(model_dir: Path) -> Path:
+    return model_dir / "llm" / DICTATION_LLM_DIRNAME
+
+
+def download_dictation_models(
+    model_dir: Path | str,
+    include_llm: bool = True,
+) -> tuple[Path, Optional[Path]]:
+    """One-time online download of public, ungated dictation models (Parakeet v3 + Qwen3-1.7B)."""
+    root = configure_model_cache_env(model_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HUB_OFFLINE"] = "0"
+    os.environ["TRANSFORMERS_OFFLINE"] = "0"
+
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError(
+            "huggingface-hub is not installed. Run 'pip install -r requirements.txt' first."
+        ) from exc
+
+    asr_target = dictation_asr_model_path(root)
+    asr_target.mkdir(parents=True, exist_ok=True)
+    print(f"[Dictation 1/2] Downloading Parakeet v3 ({DICTATION_ASR_REPO_ID}) into {asr_target}...")
+    snapshot_download(repo_id=DICTATION_ASR_REPO_ID, local_dir=str(asr_target))
+
+    llm_target: Optional[Path] = None
+    if include_llm:
+        llm_target = dictation_llm_model_path(root)
+        llm_target.mkdir(parents=True, exist_ok=True)
+        print(f"[Dictation 2/2] Downloading Qwen3-1.7B ({DICTATION_LLM_REPO_ID}) into {llm_target}...")
+        snapshot_download(repo_id=DICTATION_LLM_REPO_ID, local_dir=str(llm_target))
+
+    print(f"\nDictation models cached in: {root}")
+    return asr_target, llm_target
+
+
 def download_all_models(
     model_dir: Path | str,
     model_size: str = DEFAULT_WHISPER_MODEL,
@@ -172,6 +226,7 @@ def download_all_models(
     hf_token: Optional[str] = None,
     asr_backend: str = "auto",
     include_llm_repair: bool = False,
+    include_dictation: bool = False,
 ) -> None:
     """One-time online setup: download and cache all required weights into model_dir."""
     apply_torch_compat()
@@ -209,10 +264,13 @@ def download_all_models(
         print("[4/5] Skipping optional SER model (pass --prosody with --download-models to include it).")
 
     if include_llm_repair:
-        print(f"[5/5] Downloading local MLX LLM ({LLM_REPAIR_REPO_ID}) for --llm-repair...")
+        print(f"[5/5] Downloading local MLX LLM ({LLM_REPAIR_REPO_ID}) for --llm-repair / --summary...")
         _download_llm_repair_model(root)
     else:
-        print("[5/5] Skipping optional LLM speaker-repair model (pass --llm-repair to include it).")
+        print("[5/5] Skipping optional LLM model (pass --llm-repair or --summary to include it).")
+
+    if include_dictation:
+        download_dictation_models(root, include_llm=True)
 
     print(f"\nAll models cached in: {root}")
     print("You can now run offline transcription with zero network access.")

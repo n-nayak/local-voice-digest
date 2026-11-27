@@ -8,18 +8,52 @@ import re
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from local_transcribe.alignment import _join_word_texts
-from local_transcribe.models import llm_repair_model_path, release_memory
-from local_transcribe.types import Turn, Word
+from voice_digest.alignment import _join_word_texts
+from voice_digest.models import llm_repair_model_path, release_memory
+from voice_digest.types import Turn, Word
 
 logger = logging.getLogger(__name__)
 
 _SENTENCE_END = (".", "?", "!")
 _JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _PAUSE_CUE_MIN_SEC = 0.8
 _SUMMARY_SINGLE_PASS_MAX_CHARS = 12_000
 _SUMMARY_CHUNK_CHARS = 10_000
 MAX_SUMMARY_FOCUS_CHARS = 160
+
+
+def apply_chat_template_no_think(
+    tokenizer: object,
+    messages: list[dict[str, str]],
+    fallback_prompt: str,
+) -> str:
+    """Render a chat template with Qwen3 thinking mode disabled when supported."""
+    apply_fn = getattr(tokenizer, "apply_chat_template", None)
+    if not callable(apply_fn):
+        return fallback_prompt
+    try:
+        return str(
+            apply_fn(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        )
+    except TypeError:
+        return str(
+            apply_fn(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        )
+
+
+def strip_thinking_blocks(text: str) -> str:
+    """Defensively strip any <think>...</think> reasoning tags from model output."""
+    return _THINK_BLOCK_RE.sub("", text).strip()
 
 
 def _split_turns_into_sentences(turns: Sequence[Turn]) -> list[tuple[str, list[Word]]]:
@@ -131,7 +165,7 @@ def repair_speaker_turns(
     context_overlap: int = 5,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> list[Turn]:
-    """Use a local MLX LLM (Qwen2.5-7B-Instruct-4bit) to fix conversational speaker attribution errors.
+    """Use a local MLX LLM (Qwen3-4B-Instruct-2507-4bit) to fix conversational speaker attribution errors.
 
     Only speaker IDs are updated; transcript words and timestamps are preserved verbatim.
     """
@@ -220,12 +254,11 @@ def repair_speaker_turns(
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ]
-            if hasattr(tokenizer, "apply_chat_template"):
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-            else:
-                prompt = f"{system_msg}\n\n{user_msg}\n\nJSON:"
+            prompt = apply_chat_template_no_think(
+                tokenizer,
+                messages,
+                fallback_prompt=f"{system_msg}\n\n{user_msg}\n\nJSON:",
+            )
 
             gen_kwargs: dict[str, object] = {"prompt": prompt, "max_tokens": 768, "verbose": False}
             try:
@@ -235,7 +268,7 @@ def repair_speaker_turns(
             except Exception:
                 pass
 
-            response = generate(model, tokenizer, **gen_kwargs)
+            response = strip_thinking_blocks(str(generate(model, tokenizer, **gen_kwargs)))
             mapping = _parse_speaker_json(response, num_speakers=num_speakers)
             if not mapping:
                 logger.warning("LLM speaker repair chunk %d/%d returned unparseable output.", c_idx, len(chunk_starts))
@@ -259,7 +292,7 @@ def repair_speaker_turns(
 
 
 def _chunk_text_for_summary(lines: Sequence[str], max_chars: int = _SUMMARY_CHUNK_CHARS) -> list[str]:
-    """Split transcript lines into bounded character chunks that safely fit Qwen 7B's context window."""
+    """Split transcript lines into bounded character chunks that safely fit Qwen3 4B's context window."""
     chunks: list[str] = []
     buf: list[str] = []
     buf_len = 0
@@ -290,12 +323,11 @@ def _run_mlx_chat(
         {"role": "system", "content": system_msg},
         {"role": "user", "content": user_msg},
     ]
-    if hasattr(tokenizer, "apply_chat_template"):
-        prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-    else:
-        prompt = f"{system_msg}\n\n{user_msg}\n\nSummary:"
+    prompt = apply_chat_template_no_think(
+        tokenizer,
+        messages,
+        fallback_prompt=f"{system_msg}\n\n{user_msg}\n\nSummary:",
+    )
 
     gen_kwargs: dict[str, object] = {"prompt": prompt, "max_tokens": max_tokens, "verbose": False}
     try:
@@ -304,7 +336,7 @@ def _run_mlx_chat(
         gen_kwargs["sampler"] = make_sampler(temp=0.2)
     except Exception:
         pass
-    return str(generate(model, tokenizer, **gen_kwargs)).strip()
+    return strip_thinking_blocks(str(generate(model, tokenizer, **gen_kwargs)))
 
 
 def summarize_transcript(
@@ -313,7 +345,7 @@ def summarize_transcript(
     focus_prompt: Optional[str] = None,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> str:
-    """Generate a local AI summary using Qwen2.5-7B-Instruct-4bit with automatic map-reduce chunking.
+    """Generate a local AI summary using Qwen3-4B-Instruct-2507-4bit with automatic map-reduce chunking.
 
     Handles arbitrarily long transcripts (1-3+ hours) without overflowing the context window.
     """

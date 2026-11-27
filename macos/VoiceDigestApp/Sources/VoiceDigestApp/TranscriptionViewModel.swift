@@ -109,7 +109,6 @@ final class TranscriptionViewModel: ObservableObject {
     @Published var publishSummary: Bool = false
     @Published var summaryFocus: String = ""
     @Published var enableProsody: Bool = true
-    @Published var fastDspOnlyProsody: Bool = true
 
     @Published var isRunning: Bool = false
     @Published var progress: Double = 0.0
@@ -209,7 +208,7 @@ final class TranscriptionViewModel: ObservableObject {
                     await MainActor.run {
                         self.stageLabel = "First-time setup: downloading AI models"
                         self.detailLabel = wantLLM
-                            ? "Downloading Whisper (\(self.modelSize.rawValue)), English speaker & Qwen 7B models"
+                            ? "Downloading Whisper (\(self.modelSize.rawValue)), English speaker & Qwen3 4B models"
                             : "Downloading Whisper (\(self.modelSize.rawValue)) & English speaker models"
                         self.progress = 3.0
                     }
@@ -259,10 +258,7 @@ final class TranscriptionViewModel: ObservableObject {
                     }
                 }
                 if await self.enableProsody {
-                    args.append("--prosody")
-                    if await self.fastDspOnlyProsody {
-                        args.append("--no-ser")
-                    }
+                    args += ["--prosody", "--no-ser"]
                 }
 
                 try await self.runSubprocess(backend: backend, args: args)
@@ -315,7 +311,7 @@ final class TranscriptionViewModel: ObservableObject {
         let mlxDir = modelDir.appendingPathComponent("whisper-mlx/\(size.rawValue)")
         let segFile = modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx")
         let embFile = modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx")
-        let llmDir = modelDir.appendingPathComponent("llm/qwen2.5-7b-4bit")
+        let llmDir = modelDir.appendingPathComponent("llm/qwen3-4b-instruct-4bit")
 
         let hasMLX = (try? fm.contentsOfDirectory(atPath: mlxDir.path).isEmpty == false) ?? false
         let hasSherpa = fm.fileExists(atPath: segFile.path) && fm.fileExists(atPath: embFile.path)
@@ -388,7 +384,7 @@ final class TranscriptionViewModel: ObservableObject {
         if proc.terminationStatus != 0 {
             let reason = stderrLines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
                 ?? "Process exited with code \(proc.terminationStatus)"
-            throw NSError(domain: "LocalTranscribe", code: Int(proc.terminationStatus), userInfo: [
+            throw NSError(domain: "VoiceDigest", code: Int(proc.terminationStatus), userInfo: [
                 NSLocalizedDescriptionKey: reason
             ])
         }

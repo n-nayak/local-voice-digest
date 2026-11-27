@@ -1,1 +1,1 @@
-"""Unit and integration tests for local_transcribe."""
+"""Unit and integration tests for voice_digest."""

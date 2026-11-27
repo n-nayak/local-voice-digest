@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from local_transcribe.offline import (
+from voice_digest.offline import (
     OfflineNetworkError,
     enforce_offline_environment,
     is_network_blocker_active,

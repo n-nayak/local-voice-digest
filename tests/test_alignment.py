@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from local_transcribe.alignment import align_and_merge_turns
-from local_transcribe.types import ASRSegment, DiarizationSegment, Word
+from voice_digest.alignment import align_and_merge_turns
+from voice_digest.types import ASRSegment, DiarizationSegment, Word
 
 
 class TestAlignmentAndMerging(unittest.TestCase):
@@ -119,7 +119,7 @@ class TestAlignmentAndMerging(unittest.TestCase):
         self.assertEqual(turns[1].text, "Nice to meet you too.")
 
     def test_llm_repair_json_parser_and_turn_remerging(self) -> None:
-        from local_transcribe.llm_repair import _merge_repaired_sentences, _parse_speaker_json
+        from voice_digest.llm_repair import _merge_repaired_sentences, _parse_speaker_json
 
         mapping = _parse_speaker_json(
             '```json\n{"0": 1, "1": "speaker 2", "2": 99}\n```', num_speakers=2

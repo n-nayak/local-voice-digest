@@ -7,15 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from local_transcribe.audio import TARGET_SAMPLE_RATE
-from local_transcribe.prosody import (
+from voice_digest.audio import TARGET_SAMPLE_RATE
+from voice_digest.prosody import (
     analyze_session_prosody,
     compute_turn_pace,
     detect_mid_clause_blocks,
     detect_prolongations,
     detect_syllable_repetitions,
 )
-from local_transcribe.types import Turn, Word
+from voice_digest.types import Turn, Word
 from tests.test_audio import write_synthetic_wav
 
 

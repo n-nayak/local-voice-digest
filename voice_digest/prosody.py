@@ -10,9 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from local_transcribe.audio import read_wav_segment
-from local_transcribe.models import DeviceConfig, release_memory, ser_model_path
-from local_transcribe.types import SessionSummary, SpeakerSummary, Turn, TurnProsody, Word
+from voice_digest.audio import read_wav_segment
+from voice_digest.models import DeviceConfig, release_memory, ser_model_path
+from voice_digest.types import SessionSummary, SpeakerSummary, Turn, TurnProsody, Word
 
 logger = logging.getLogger(__name__)
 

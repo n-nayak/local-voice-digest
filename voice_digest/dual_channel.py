@@ -8,22 +8,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from local_transcribe.alignment import align_and_merge_turns
-from local_transcribe.asr import resolve_asr_backend, transcribe_and_align
-from local_transcribe.audio import get_wav_rms, temporary_wav
-from local_transcribe.diarization import diarize_audio
-from local_transcribe.formatter import format_transcript
-from local_transcribe.llm_repair import summarize_transcript
-from local_transcribe.models import (
+from voice_digest.alignment import align_and_merge_turns
+from voice_digest.asr import resolve_asr_backend, transcribe_and_align
+from voice_digest.audio import get_wav_rms, temporary_wav
+from voice_digest.diarization import diarize_audio
+from voice_digest.formatter import format_transcript
+from voice_digest.llm_repair import summarize_transcript
+from voice_digest.models import (
     DEFAULT_WHISPER_MODEL,
     release_memory,
     resolve_device_config,
 )
-from local_transcribe.offline import enforce_offline_environment, offline_socket_guard
-from local_transcribe.pipeline import emit_json_progress
-from local_transcribe.power import format_elapsed, prevent_system_sleep, timed_stage
-from local_transcribe.prosody import analyze_session_prosody
-from local_transcribe.types import ASRSegment, DiarizationSegment, SessionSummary, Turn
+from voice_digest.offline import enforce_offline_environment, offline_socket_guard
+from voice_digest.pipeline import emit_json_progress
+from voice_digest.power import format_elapsed, prevent_system_sleep, timed_stage
+from voice_digest.prosody import analyze_session_prosody
+from voice_digest.types import ASRSegment, DiarizationSegment, SessionSummary, Turn
 
 logger = logging.getLogger(__name__)
 

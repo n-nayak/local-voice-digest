@@ -4,16 +4,19 @@ import UniformTypeIdentifiers
 enum MainTab: String, CaseIterable, Identifiable {
     case file = "Transcribe File"
     case live = "Live Call"
+    case dictation = "Dictation"
     var id: String { rawValue }
 }
 
 struct ContentView: View {
     @StateObject private var vm = TranscriptionViewModel()
     @ObservedObject var liveVM: LiveCaptureViewModel
+    @ObservedObject var dictationManager: DictationManager
     @AppStorage("hideDockIcon") private var hideDockIcon: Bool = false
     @State private var selectedTab: MainTab = .file
     @State private var isDropTargeted = false
     @State private var showingInfo = false
+    @State private var showingSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -27,19 +30,25 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            if selectedTab == .file {
+            switch selectedTab {
+            case .file:
                 dropZoneSection
                 optionsSection
                 outputFolderSection
                 Spacer(minLength: 4)
                 progressAndActionsSection
-            } else {
+            case .live:
                 liveCallTabSection
+            case .dictation:
+                dictationTabSection
             }
         }
         .padding(22)
         .sheet(isPresented: $showingInfo) {
             InfoView()
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(dictationManager: dictationManager)
         }
     }
 
@@ -57,13 +66,21 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("View detailed info about settings, models, and RAM usage")
+                    .help("View detailed info about privacy, settings, models, and RAM usage")
                 }
                 Text("100% on-device transcription, speaker diarization & acoustic cues")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button {
+                showingSettings = true
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.bordered)
+            .help("Manage offline models, dictation hotkey, and app preferences")
         }
     }
 
@@ -172,10 +189,10 @@ struct ContentView: View {
                     .padding(.leading, 20)
                 }
 
-                Toggle("AI Speaker Repair (Local Qwen 7B — fixes speaker swaps)", isOn: $vm.enableLLMRepair)
+                Toggle("AI Speaker Repair (Local Qwen3 4B — fixes speaker swaps)", isOn: $vm.enableLLMRepair)
                     .disabled(vm.isRunning || vm.speakers < 2)
 
-                Toggle("Publish AI Summary (Local Qwen 7B — prepends summary to .txt)", isOn: $vm.publishSummary)
+                Toggle("Publish AI Summary (Local Qwen3 4B — prepends summary to .txt)", isOn: $vm.publishSummary)
                     .disabled(vm.isRunning)
 
                 if vm.publishSummary {
@@ -209,14 +226,6 @@ struct ContentView: View {
 
                 Toggle("Include Acoustic & Prosody Analysis (pace, pauses, stress)", isOn: $vm.enableProsody)
                     .disabled(vm.isRunning)
-
-                if vm.enableProsody {
-                    Toggle("Fast DSP-only Prosody (skip heavy neural SER model)", isOn: $vm.fastDspOnlyProsody)
-                        .padding(.leading, 20)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .disabled(vm.isRunning)
-                }
             }
             .padding(8)
         }
@@ -311,7 +320,7 @@ struct ContentView: View {
 
     private var liveCallTabSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Live capture hero box
+            // Live capture hero box with primary Start/Stop controls right at the top
             HStack(spacing: 14) {
                 Image(systemName: liveVM.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
                     .font(.system(size: 36))
@@ -320,12 +329,39 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(liveVM.isRecording ? "Capturing Call Audio — \(liveVM.formattedElapsed)" : "Dual-Channel Call Capture")
                         .font(.headline)
-                    Text("Captures your mic (Me) and system audio (Other) locally. You can also Start/Stop anytime from the top menu bar icon.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if dictationManager.isEnabled && !liveVM.isRecording {
+                        Text("Turn off System-Wide Dictation to start a Live Call Capture (only one active session at a time).")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Captures your mic (Me) and system audio (Other) locally. Synced with the top menu bar icon.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
+                if liveVM.isRecording {
+                    HStack(spacing: 8) {
+                        Button("Cancel", role: .destructive) {
+                            liveVM.cancelCallCapture()
+                        }
+                        .buttonStyle(.bordered)
+                        Button("Stop & Transcribe") {
+                            liveVM.stopCallCapture()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    Button {
+                        liveVM.startCallCapture()
+                    } label: {
+                        Label("Start Call Capture", systemImage: "record.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(dictationManager.isEnabled)
+                }
             }
             .padding(16)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
@@ -394,7 +430,7 @@ struct ContentView: View {
                     Toggle("Post-call Acoustic & Prosody Analysis (DSP)", isOn: $liveVM.enableProsody)
                         .disabled(liveVM.isRecording)
 
-                    Toggle("Post-call AI Summary (Local Qwen 7B)", isOn: $liveVM.publishSummary)
+                    Toggle("Post-call AI Summary (Local Qwen3 4B)", isOn: $liveVM.publishSummary)
                         .disabled(liveVM.isRecording)
 
                     if liveVM.publishSummary {
@@ -477,23 +513,176 @@ struct ContentView: View {
             }
 
             Spacer(minLength: 4)
+        }
+    }
 
-            HStack {
-                Spacer()
-                if liveVM.isRecording {
-                    Button("Cancel", role: .destructive) {
-                        liveVM.cancelCallCapture()
+    private var dictationTabSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Hero status & master switch
+            HStack(spacing: 14) {
+                Image(systemName: dictationManager.isEnabled ? "waveform.and.mic" : "mic.slash.circle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(dictationManager.status.isReadyOrActive ? Color.green : Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("System-Wide Dictation")
+                            .font(.headline)
+                        Text(dictationManager.status.label)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(dictationStatusColor.opacity(0.18), in: Capsule())
+                            .foregroundStyle(dictationStatusColor)
                     }
-                    Button("Stop & Transcribe") {
-                        liveVM.stopCallCapture()
+                    if liveVM.isRecording {
+                        Text("Disabled while Live Call Capture is active (only one active session at a time).")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Hold your hotkey in any Mac app, speak naturally, and release to paste clean text in <500 ms — 100% on your Mac.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .buttonStyle(.borderedProminent)
-                } else {
-                    Button("Start Call Capture") {
-                        liveVM.startCallCapture()
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
+                Spacer()
+                Toggle("", isOn: $dictationManager.isEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .disabled(liveVM.isRecording)
+            }
+            .padding(16)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+
+            // Permissions row
+            HStack(spacing: 12) {
+                permissionBadge(
+                    title: "Microphone",
+                    granted: dictationManager.hasMicrophonePermission,
+                    actionTitle: "Allow"
+                ) {
+                    dictationManager.requestMicrophonePermission()
+                }
+
+                permissionBadge(
+                    title: "Accessibility (Hotkey & Paste)",
+                    granted: dictationManager.hasAccessibilityPermission,
+                    actionTitle: "Open Settings"
+                ) {
+                    dictationManager.openAccessibilitySettings()
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            if let err = dictationManager.errorMessage {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+            }
+
+            GroupBox("Hotkey & Behavior") {
+                VStack(alignment: .leading, spacing: 11) {
+                    HStack {
+                        Text("Trigger Hotkey")
+                            .frame(width: 120, alignment: .leading)
+                        Picker("", selection: $dictationManager.hotkeyOption) {
+                            ForEach(DictationHotkeyOption.allCases) { opt in
+                                Text(opt.label).tag(opt)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    HStack {
+                        Text("Trigger Mode")
+                            .frame(width: 120, alignment: .leading)
+                        Picker("", selection: $dictationManager.triggerMode) {
+                            ForEach(DictationTriggerMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    Toggle("Show floating recording pill with live preview", isOn: $dictationManager.showFloatingPill)
+
+                    Toggle("Auto-paste chunks on pause or end of sentence (. ? !)", isOn: $dictationManager.streamPasteChunks)
+                    if dictationManager.streamPasteChunks {
+                        Text("Pastes each sentence automatically after a short beat or 1.2s pause. Turn off if you want voice self-corrections across multiple sentences.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 20)
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox("AI Polish & Personal Dictionary") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("AI Cleanup (Local Qwen3 1.7B — removes 'um/uh', repeats & self-corrections)", isOn: $dictationManager.enableAICleanup)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Personal Dictionary (names, acronyms, technical terms — comma-separated):")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g., VoiceDigest, sherpa-onnx, mlx-whisper, Kubernetes", text: $dictationManager.customVocabulary)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+                .padding(8)
+            }
+
+            if !dictationManager.lastTranscribedText.isEmpty {
+                GroupBox("Last Dictation") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(dictationManager.lastTranscribedText)
+                            .font(.subheadline)
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                        if !dictationManager.lastLatencySummary.isEmpty {
+                            Text(dictationManager.lastLatencySummary)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                }
+            }
+
+            Spacer(minLength: 4)
+        }
+        .onAppear {
+            dictationManager.refreshPermissions()
+        }
+    }
+
+    private var dictationStatusColor: Color {
+        switch dictationManager.status {
+        case .ready: return .green
+        case .listening: return .red
+        case .transcribing, .warmingUp, .downloading: return .orange
+        case .error: return .red
+        case .off: return .secondary
+        }
+    }
+
+    private func permissionBadge(title: String, granted: Bool, actionTitle: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(granted ? Color.green : Color.orange)
+            Text(title)
+                .font(.caption.weight(.medium))
+            if !granted {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
             }
         }
     }

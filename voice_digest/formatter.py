@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from local_transcribe.types import SessionSummary, Turn, TurnProsody
+from voice_digest.types import SessionSummary, Turn, TurnProsody
 
 VALID_METADATA_MODES = ("both", "summary-only", "inline-only")
 

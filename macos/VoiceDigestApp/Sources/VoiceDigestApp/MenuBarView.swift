@@ -21,6 +21,7 @@ struct ScreenShareHiddenWindowAccessor: NSViewRepresentable {
 /// Fixed-size menu bar companion popover: never shrinks dynamically (avoids macOS MenuBarExtra resize artifacts).
 struct MenuBarView: View {
     @ObservedObject var liveVM: LiveCaptureViewModel
+    @ObservedObject var dictationManager: DictationManager
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -54,10 +55,14 @@ struct MenuBarView: View {
                     Button {
                         liveVM.startCallCapture()
                     } label: {
-                        Label("Start Call Capture", systemImage: "record.circle")
-                            .frame(maxWidth: .infinity)
+                        Label(
+                            dictationManager.isEnabled ? "Turn Off Dictation to Record" : "Start Call Capture",
+                            systemImage: "record.circle"
+                        )
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(dictationManager.isEnabled)
                 }
             }
 
@@ -71,6 +76,28 @@ struct MenuBarView: View {
                     .font(.caption2)
                     .foregroundStyle(.red)
                     .lineLimit(2)
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(dictationManager.status.isReadyOrActive ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Dictation (\(dictationManager.hotkeyOption.shortBadge))")
+                        .font(.caption.weight(.semibold))
+                    Text(dictationManager.status.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Toggle("", isOn: $dictationManager.isEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .disabled(liveVM.isRecording)
             }
 
             Divider()
@@ -165,7 +192,7 @@ struct MenuBarView: View {
             }
         }
         .padding(14)
-        .frame(width: 290, height: 260)
+        .frame(width: 290, height: 300)
         .background(ScreenShareHiddenWindowAccessor())
     }
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-from local_transcribe.types import ASRSegment, DiarizationSegment, Turn, Word
+from voice_digest.types import ASRSegment, DiarizationSegment, Turn, Word
 
 _LEADING_PUNCT_RE = re.compile(r"^[,.;:!?)\]}]+")
 _SENTENCE_END_CHARS = (".", "?", "!")

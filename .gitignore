@@ -19,8 +19,8 @@ transcript.txt
 *_transcript.txt
 
 # Swift / macOS build artifacts
-macos/LocalTranscribeApp/.build/
-macos/LocalTranscribeApp/.swiftpm/
+macos/VoiceDigestApp/.build/
+macos/VoiceDigestApp/.swiftpm/
 dist/
 build/
 *.dmg
