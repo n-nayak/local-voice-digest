@@ -7,6 +7,7 @@ unless '--download-models' is explicitly requested.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 
@@ -20,4 +21,5 @@ if "--download-models" not in sys.argv[1:]:
 from voice_digest.cli import main
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     raise SystemExit(main())

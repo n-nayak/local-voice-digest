@@ -121,9 +121,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--diarizer",
-        choices=("pyannote", "sherpa-onnx"),
+        choices=("auto", "sortformer", "sherpa-onnx", "pyannote"),
         default="pyannote",
-        help="Speaker diarization backend (default: pyannote).",
+        help="Speaker diarization backend (sortformer = NVIDIA MLX GPU for 2-4 speakers, sherpa-onnx = 5+ speakers, pyannote = gated).",
     )
     parser.add_argument(
         "--asr-backend",
@@ -157,12 +157,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--llm-repair",
         action="store_true",
-        help="Run a local MLX LLM (Qwen3-4B-Instruct-4bit) pass to repair conversational speaker-label swaps.",
+        help="Run a local MLX LLM (Qwen3.5-4B-MLX-4bit) pass to repair conversational speaker-label swaps.",
     )
     parser.add_argument(
         "--summary",
         action="store_true",
-        help="Generate a local AI summary (Qwen3-4B-Instruct-4bit) at the top of the output transcript.",
+        help="Generate a local AI summary (Qwen3.5-4B-MLX-4bit) at the top of the output transcript.",
     )
     parser.add_argument(
         "--summary-focus",

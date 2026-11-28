@@ -561,8 +561,8 @@ def run_dual_channel_pipeline(config: DualChannelConfig) -> Path:
             # Stage 5: Optional AI Summary
             ai_summary_text: Optional[str] = None
             if config.publish_summary and turns and not config.append_mode:
-                _report(92.0, "Generating AI summary (Local Qwen3 4B)", "Summarizing call")
-                with timed_stage("[Dual 4/4] Local AI summary (Qwen3 4B)"):
+                _report(92.0, "Generating AI summary (Local Qwen3.5 4B)", "Summarizing call")
+                with timed_stage("[Dual 4/4] Local AI summary (Qwen3.5 4B)"):
                     ai_summary_text = summarize_transcript(
                         turns=turns,
                         model_dir=model_dir,

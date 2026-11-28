@@ -165,7 +165,7 @@ def repair_speaker_turns(
     context_overlap: int = 5,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> list[Turn]:
-    """Use a local MLX LLM (Qwen3-4B-Instruct-2507-4bit) to fix conversational speaker attribution errors.
+    """Use a local MLX LLM (Qwen3.5-4B-MLX-4bit) to fix conversational speaker attribution errors.
 
     Only speaker IDs are updated; transcript words and timestamps are preserved verbatim.
     """
@@ -200,6 +200,31 @@ def repair_speaker_turns(
     total_reassigned = 0
 
     try:
+        # Infer a compact global speaker role profile from the opening ~40 sentences
+        # so long 5-minute monologues stay anchored to the right speaker across all chunks.
+        speaker_profile = ""
+        try:
+            opening_lines = [
+                f"[{spk}] {_join_word_texts(words)}"
+                for spk, words in sentences[:40]
+            ]
+            profile_sys = (
+                f"In 1 short sentence per speaker (1 to {num_speakers}), describe each speaker's role "
+                "or identity based on this opening excerpt (e.g., 'Speaker 1: Interviewer asking questions; "
+                "Speaker 2: Candidate explaining their background'). Output plain text only, max 40 words."
+            )
+            speaker_profile = _run_mlx_chat(
+                model,
+                tokenizer,
+                profile_sys,
+                "\n".join(opening_lines),
+                max_tokens=96,
+            ).strip()
+        except Exception:
+            speaker_profile = ""
+
+        profile_block = f"Global speaker roles: {speaker_profile}\n" if speaker_profile else ""
+
         total = len(sentences)
         chunk_starts = list(range(0, total, chunk_size))
         for c_idx, start in enumerate(chunk_starts, start=1):
@@ -225,6 +250,7 @@ def repair_speaker_turns(
             system_msg = (
                 f"You assign speaker numbers (1 to {num_speakers}) to numbered sentences from a "
                 f"{num_speakers}-speaker conversation (such as an interview, podcast, meeting, or call).\n"
+                f"{profile_block}"
                 "Rules:\n"
                 "1. Infer and track each speaker's perspective, pronouns ('I/my/our' vs 'you/your'), and identity/role "
                 "across the conversation (e.g., host vs guest, interviewer vs candidate, presenter vs listener). "
@@ -232,9 +258,11 @@ def repair_speaker_turns(
                 "2. A question and its answer belong to DIFFERENT speakers.\n"
                 "3. Reciprocal greetings and brief acknowledgments ('Nice to meet you' / 'Nice to meet you too', "
                 "confirming a name, 'Yeah got it') belong to DIFFERENT speakers.\n"
-                "4. Keep a continuous multi-sentence explanation, story, or monologue by the same person on the SAME speaker.\n"
+                "4. Keep a continuous multi-sentence or multi-minute explanation, story, or monologue by the same person "
+                "strictly on the SAME speaker—even if they pause briefly, ask a rhetorical question, or quote what someone else said. "
+                "Do NOT split a monologue across speakers without an explicit conversational handoff or reply.\n"
                 "5. A [pause Xs] cue often marks a turn handoff, though a speaker can also pause mid-thought.\n"
-                "6. Stay consistent with any preceding 'context [speaker X]' lines.\n"
+                "6. Stay consistent with any preceding 'context [speaker X]' lines and the global speaker roles above.\n"
                 f"7. Output ONLY a single compact JSON object mapping EVERY numbered line ID ({start}..{end - 1}) "
                 "to an integer speaker number. No markdown, no explanation.\n\n"
                 "Example input:\n"
@@ -292,7 +320,7 @@ def repair_speaker_turns(
 
 
 def _chunk_text_for_summary(lines: Sequence[str], max_chars: int = _SUMMARY_CHUNK_CHARS) -> list[str]:
-    """Split transcript lines into bounded character chunks that safely fit Qwen3 4B's context window."""
+    """Split transcript lines into bounded character chunks that safely fit Qwen3.5 4B's context window."""
     chunks: list[str] = []
     buf: list[str] = []
     buf_len = 0
@@ -345,7 +373,7 @@ def summarize_transcript(
     focus_prompt: Optional[str] = None,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> str:
-    """Generate a local AI summary using Qwen3-4B-Instruct-2507-4bit with automatic map-reduce chunking.
+    """Generate a local AI summary using Qwen3.5-4B-MLX-4bit with automatic map-reduce chunking.
 
     Handles arbitrarily long transcripts (1-3+ hours) without overflowing the context window.
     """

@@ -16,14 +16,17 @@ from voice_digest.dictation import (
     parse_custom_vocab,
     sanitize_dictation_output,
 )
+from voice_digest.diarization import resolve_diarizer
 from voice_digest.llm_repair import apply_chat_template_no_think, strip_thinking_blocks
 from voice_digest.models import (
     DICTATION_ASR_REPO_ID,
     DICTATION_LLM_REPO_ID,
     LLM_REPAIR_REPO_ID,
+    SORTFORMER_REPO_ID,
     dictation_asr_model_path,
     dictation_llm_model_path,
     llm_repair_model_path,
+    sortformer_model_path,
 )
 
 
@@ -44,12 +47,98 @@ def _write_test_wav(path: Path, amplitude: float, duration_sec: float = 0.5) -> 
 class DictationTests(unittest.TestCase):
     def test_model_paths_and_ungated_repo_ids(self) -> None:
         root = Path("/tmp/voicedigest-models")
-        self.assertIn("Qwen3-4B", LLM_REPAIR_REPO_ID)
+        self.assertIn("Qwen3.5-4B", LLM_REPAIR_REPO_ID)
+        self.assertIn("sortformer", SORTFORMER_REPO_ID)
         self.assertIn("parakeet-tdt-0.6b-v3", DICTATION_ASR_REPO_ID)
         self.assertIn("Qwen3-1.7B", DICTATION_LLM_REPO_ID)
-        self.assertEqual(llm_repair_model_path(root), root / "llm" / "qwen3-4b-instruct-4bit")
+        self.assertEqual(llm_repair_model_path(root), root / "llm" / "qwen3.5-4b-mlx-4bit")
+        self.assertEqual(sortformer_model_path(root), root / "sortformer" / "sortformer-4spk-v2.1")
         self.assertEqual(dictation_asr_model_path(root), root / "dictation" / "parakeet-tdt-0.6b-v3")
         self.assertEqual(dictation_llm_model_path(root), root / "llm" / "qwen3-1.7b-4bit")
+
+    def test_sortformer_auto_falls_back_to_sherpa_above_four_speakers(self) -> None:
+        self.assertEqual(resolve_diarizer("sortformer", 2), "sortformer")
+        self.assertEqual(resolve_diarizer("sortformer", 4), "sortformer")
+        self.assertEqual(resolve_diarizer("sortformer", 5), "sherpa-onnx")
+        self.assertEqual(resolve_diarizer("sherpa-onnx", 2), "sherpa-onnx")
+
+    def test_sortformer_streaming_merges_chunks_and_reports_progress(self) -> None:
+        import sys
+        import types
+        from unittest import mock
+
+        from voice_digest.diarization import _diarize_sortformer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wav_path = root / "sample.wav"
+            _write_test_wav(wav_path, amplitude=0.2, duration_sec=1.0)
+            sf_dir = sortformer_model_path(root)
+            sf_dir.mkdir(parents=True, exist_ok=True)
+            (sf_dir / "config.json").write_text("{}", encoding="utf-8")
+
+            class FakeSeg:
+                def __init__(self, start: float, end: float, speaker: int) -> None:
+                    self.start = start
+                    self.end = end
+                    self.speaker = speaker
+
+            class FakeOut:
+                def __init__(self, segments: list[FakeSeg]) -> None:
+                    self.segments = segments
+
+            class FakeSortformer:
+                def generate_stream(self, _path: str, **_kwargs: object):
+                    yield FakeOut([FakeSeg(0.0, 5.0, 0)])
+                    yield FakeOut([FakeSeg(5.05, 8.0, 0), FakeSeg(8.5, 10.0, 1)])
+
+            fake_vad = types.ModuleType("mlx_audio.vad")
+            fake_vad.load = lambda _dir: FakeSortformer()  # type: ignore[attr-defined]
+            fake_pkg = types.ModuleType("mlx_audio")
+            fake_pkg.vad = fake_vad  # type: ignore[attr-defined]
+
+            progress_calls: list[tuple[float, str]] = []
+            with mock.patch.dict(sys.modules, {"mlx_audio": fake_pkg, "mlx_audio.vad": fake_vad}):
+                segs = _diarize_sortformer(
+                    wav_path=wav_path,
+                    num_speakers=2,
+                    model_dir=root,
+                    progress_cb=lambda f, msg: progress_calls.append((f, msg)),
+                )
+
+            self.assertEqual(len(segs), 2)
+            self.assertEqual(segs[0].speaker, "SPEAKER_00")
+            self.assertAlmostEqual(segs[0].start, 0.0)
+            self.assertAlmostEqual(segs[0].end, 8.0)
+            self.assertEqual(segs[1].speaker, "SPEAKER_01")
+            self.assertTrue(len(progress_calls) >= 2)
+
+    def test_clamp_to_top_speakers_and_spherical_kmeans(self) -> None:
+        from voice_digest.diarization import _clamp_to_top_speakers, _spherical_kmeans
+        from voice_digest.types import DiarizationSegment
+
+        segs = [
+            DiarizationSegment(0.0, 10.0, "SPEAKER_00"),
+            DiarizationSegment(10.5, 11.2, "SPEAKER_02"),  # phantom 3rd slot
+            DiarizationSegment(12.0, 22.0, "SPEAKER_01"),
+        ]
+        clamped = _clamp_to_top_speakers(segs, num_speakers=2)
+        self.assertEqual({s.speaker for s in clamped}, {"SPEAKER_00", "SPEAKER_01"})
+        self.assertEqual(clamped[1].speaker, "SPEAKER_00")
+
+        # Two clearly separated voiceprint clusters should separate cleanly
+        embs = [
+            [1.0, 0.0, 0.0],
+            [0.98, 0.1, 0.0],
+            [0.95, 0.05, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.05, 0.99, 0.0],
+        ]
+        labels = _spherical_kmeans(embs, k=2)
+        self.assertEqual(labels[0], labels[1])
+        self.assertEqual(labels[1], labels[2])
+        self.assertEqual(labels[3], labels[4])
+        self.assertNotEqual(labels[0], labels[3])
 
     def test_qwen3_chat_template_no_think_and_strip(self) -> None:
         class ModernTok:

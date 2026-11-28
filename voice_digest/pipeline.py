@@ -262,7 +262,7 @@ def run_transcription_pipeline(config: PipelineConfig) -> Path:
             logger.info("Turn merging complete: %d turns", len(turns))
 
             if config.llm_repair and config.num_speakers >= 2:
-                _report(84.0, "Repairing speaker labels (Local Qwen 7B)", f"{len(turns)} turns")
+                _report(84.0, "Repairing speaker labels (Local Qwen3.5 4B)", f"{len(turns)} turns")
                 with timed_stage(
                     f"[Stage 3b/5] Local LLM speaker repair ({len(turns)} turns)"
                 ):
@@ -274,7 +274,7 @@ def run_transcription_pipeline(config: PipelineConfig) -> Path:
                         progress_cb=(
                             lambda frac, detail: _report(
                                 84.0 + 6.0 * frac,
-                                "Repairing speaker labels (Local Qwen 7B)",
+                                "Repairing speaker labels (Local Qwen3.5 4B)",
                                 detail,
                             )
                         )
@@ -312,8 +312,8 @@ def run_transcription_pipeline(config: PipelineConfig) -> Path:
 
             ai_summary_text: Optional[str] = None
             if config.publish_summary:
-                _report(95.0, "Generating AI summary (Local Qwen 7B)", "Summarizing transcript")
-                with timed_stage("[Stage 4b/5] Local AI summary (Qwen 7B)"):
+                _report(95.0, "Generating AI summary (Local Qwen3.5 4B)", "Summarizing transcript")
+                with timed_stage("[Stage 4b/5] Local AI summary (Qwen3.5 4B)"):
                     ai_summary_text = summarize_transcript(
                         turns=turns,
                         model_dir=model_dir,
@@ -321,7 +321,7 @@ def run_transcription_pipeline(config: PipelineConfig) -> Path:
                         progress_cb=(
                             lambda frac, detail: _report(
                                 95.0 + 3.0 * frac,
-                                "Generating AI summary (Local Qwen 7B)",
+                                "Generating AI summary (Local Qwen3.5 4B)",
                                 detail,
                             )
                         )

@@ -292,10 +292,12 @@ final class LiveCaptureViewModel: ObservableObject {
 
         do {
             // Auto-download missing public models (no token required)
+            let effectiveDiarizer = remoteSpeakers <= 4 ? "sortformer" : "sherpa-onnx"
             let needsDL = needsModelDownload(
                 modelDir: backend.modelDir,
                 size: modelSize,
-                needSherpa: remoteSpeakers >= 2,
+                diarizer: effectiveDiarizer,
+                needDiarizer: remoteSpeakers >= 2,
                 needLLM: summary
             )
             if needsDL {
@@ -304,7 +306,7 @@ final class LiveCaptureViewModel: ObservableObject {
                     "--download-models",
                     "--asr-backend", "mlx",
                     "--model-size", modelSize.rawValue,
-                    "--diarizer", "sherpa-onnx",
+                    "--diarizer", effectiveDiarizer,
                     "--model-dir", backend.modelDir.path
                 ]
                 if summary { dlArgs.append("--llm-repair") }
@@ -317,7 +319,7 @@ final class LiveCaptureViewModel: ObservableObject {
                 "--remote-speakers", "\(remoteSpeakers)",
                 "--asr-backend", "mlx",
                 "--model-size", modelSize.rawValue,
-                "--diarizer", "sherpa-onnx",
+                "--diarizer", effectiveDiarizer,
                 "--model-dir", backend.modelDir.path,
                 "--language", "en",
                 "--output", outputURL.path,
@@ -371,19 +373,28 @@ final class LiveCaptureViewModel: ObservableObject {
     private nonisolated func needsModelDownload(
         modelDir: URL,
         size: WhisperModelSize,
-        needSherpa: Bool,
+        diarizer: String,
+        needDiarizer: Bool,
         needLLM: Bool
     ) -> Bool {
         let fm = FileManager.default
         let mlxDir = modelDir.appendingPathComponent("whisper-mlx/\(size.rawValue)")
         let hasMLX = (try? fm.contentsOfDirectory(atPath: mlxDir.path).isEmpty == false) ?? false
-        let hasSherpa = !needSherpa || (
-            fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx").path) &&
-            fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx").path)
-        )
-        let llmDir = modelDir.appendingPathComponent("llm/qwen3-4b-instruct-4bit")
+
+        let hasDiarizer: Bool
+        if !needDiarizer {
+            hasDiarizer = true
+        } else if diarizer == "sortformer" {
+            let sfDir = modelDir.appendingPathComponent("sortformer/sortformer-4spk-v2.1")
+            hasDiarizer = (try? fm.contentsOfDirectory(atPath: sfDir.path).isEmpty == false) ?? false
+        } else {
+            hasDiarizer = fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx").path) &&
+                fm.fileExists(atPath: modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx").path)
+        }
+
+        let llmDir = modelDir.appendingPathComponent("llm/qwen3.5-4b-mlx-4bit")
         let hasLLM = !needLLM || ((try? fm.contentsOfDirectory(atPath: llmDir.path).isEmpty == false) ?? false)
-        return !(hasMLX && hasSherpa && hasLLM)
+        return !(hasMLX && hasDiarizer && hasLLM)
     }
 
     private nonisolated func runCLI(backend: BackendCommand, args: [String], jobID: String?) async throws {

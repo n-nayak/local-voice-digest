@@ -58,6 +58,8 @@ if [ "$SELF_CONTAINED" = true ]; then
         --collect-all mlx \
         --collect-all mlx_whisper \
         --collect-all mlx_lm \
+        --collect-all mlx_audio \
+        --collect-all miniaudio \
         --collect-all parakeet_mlx \
         --collect-all sherpa_onnx \
         --collect-all opensmile \

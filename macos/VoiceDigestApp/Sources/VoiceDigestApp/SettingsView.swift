@@ -21,6 +21,7 @@ struct LocalModelStatus: Identifiable {
     let sizeLabel: String
     let purpose: String
     let isDownloaded: Bool
+    let downloadArgs: [String]
 }
 
 @MainActor
@@ -30,8 +31,10 @@ final class ModelInventoryViewModel: ObservableObject {
     @Published var statusMessage: String = ""
     @Published var errorMessage: String?
 
-    var allDownloaded: Bool {
-        !models.isEmpty && models.allSatisfy(\.isDownloaded)
+    var allRecommendedDownloaded: Bool {
+        let recommendedIDs: Set<String> = ["whisper-turbo", "sortformer-v2.1", "sherpa-onnx", "qwen3.5-4b", "parakeet-v3", "qwen3-1.7b"]
+        let subset = models.filter { recommendedIDs.contains($0.id) }
+        return !subset.isEmpty && subset.allSatisfy(\.isDownloaded)
     }
 
     func refresh() {
@@ -48,39 +51,84 @@ final class ModelInventoryViewModel: ObservableObject {
 
         models = [
             LocalModelStatus(
+                id: "whisper-base",
+                name: "Whisper Base (MLX)",
+                sizeLabel: "~150 MB",
+                purpose: "Fastest drafts & live 60s rolling mode",
+                isDownloaded: dirHasFiles("whisper-mlx/base"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "base", "--diarizer", "sherpa-onnx"]
+            ),
+            LocalModelStatus(
+                id: "whisper-small",
+                name: "Whisper Small (MLX)",
+                sizeLabel: "~500 MB",
+                purpose: "Balanced speed & accuracy",
+                isDownloaded: dirHasFiles("whisper-mlx/small"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "small", "--diarizer", "sherpa-onnx"]
+            ),
+            LocalModelStatus(
+                id: "whisper-medium",
+                name: "Whisper Medium (MLX)",
+                sizeLabel: "~1.5 GB",
+                purpose: "Strong accuracy on accents & technical terms",
+                isDownloaded: dirHasFiles("whisper-mlx/medium"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "medium", "--diarizer", "sherpa-onnx"]
+            ),
+            LocalModelStatus(
                 id: "whisper-turbo",
-                name: "Whisper Turbo (MLX)",
+                name: "Whisper Turbo (MLX) — Recommended",
                 sizeLabel: "~1.6 GB",
-                purpose: "File & Live Call transcription",
-                isDownloaded: dirHasFiles("whisper-mlx/turbo")
+                purpose: "Default File & Live Call transcription",
+                isDownloaded: dirHasFiles("whisper-mlx/turbo"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "turbo", "--diarizer", "sortformer"]
+            ),
+            LocalModelStatus(
+                id: "whisper-large-v3",
+                name: "Whisper Large v3 (MLX)",
+                sizeLabel: "~3.0 GB",
+                purpose: "Highest transcription accuracy, slowest",
+                isDownloaded: dirHasFiles("whisper-mlx/large-v3"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "large-v3", "--diarizer", "sortformer"]
+            ),
+            LocalModelStatus(
+                id: "sortformer-v2.1",
+                name: "NVIDIA Sortformer v2.1 (MLX)",
+                sizeLabel: "~450 MB",
+                purpose: "End-to-end speaker separation (2–4 speakers)",
+                isDownloaded: dirHasFiles("sortformer/sortformer-4spk-v2.1"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "turbo", "--diarizer", "sortformer"]
             ),
             LocalModelStatus(
                 id: "sherpa-onnx",
                 name: "Sherpa-ONNX Diarizer",
                 sizeLabel: "~32 MB",
-                purpose: "Speaker separation (zero token)",
-                isDownloaded: hasSherpa
+                purpose: "Speaker separation fallback for 5+ speakers",
+                isDownloaded: hasSherpa,
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "turbo", "--diarizer", "sherpa-onnx"]
             ),
             LocalModelStatus(
-                id: "qwen3-4b",
-                name: "Qwen3 4B Instruct (4-bit)",
-                sizeLabel: "~2.3 GB",
-                purpose: "Speaker repair & AI summaries",
-                isDownloaded: dirHasFiles("llm/qwen3-4b-instruct-4bit")
+                id: "qwen3.5-4b",
+                name: "Qwen3.5 4B (MLX 4-bit)",
+                sizeLabel: "~2.9 GB",
+                purpose: "Meeting speaker repair & AI summaries",
+                isDownloaded: dirHasFiles("llm/qwen3.5-4b-mlx-4bit"),
+                downloadArgs: ["--download-models", "--asr-backend", "mlx", "--model-size", "turbo", "--diarizer", "sortformer", "--llm-repair"]
             ),
             LocalModelStatus(
                 id: "parakeet-v3",
                 name: "Parakeet TDT 0.6B v3 (MLX)",
                 sizeLabel: "~1.2 GB",
                 purpose: "System-wide dictation (<500 ms)",
-                isDownloaded: dirHasFiles("dictation/parakeet-tdt-0.6b-v3")
+                isDownloaded: dirHasFiles("dictation/parakeet-tdt-0.6b-v3"),
+                downloadArgs: ["--download-models", "--dictation-models"]
             ),
             LocalModelStatus(
                 id: "qwen3-1.7b",
                 name: "Qwen3 1.7B (4-bit)",
                 sizeLabel: "~1.0 GB",
                 purpose: "Dictation AI cleanup (fillers/edits)",
-                isDownloaded: dirHasFiles("llm/qwen3-1.7b-4bit")
+                isDownloaded: dirHasFiles("llm/qwen3-1.7b-4bit"),
+                downloadArgs: ["--download-models", "--dictation-models"]
             ),
         ]
     }
@@ -91,14 +139,21 @@ final class ModelInventoryViewModel: ObservableObject {
         NSWorkspace.shared.open(dir)
     }
 
-    func downloadAllModels() {
+    func downloadSingleModel(_ item: LocalModelStatus) {
         runDownload(
-            label: "Downloading all public models (~6.1 GB total)…",
+            label: "Downloading \(item.name) (\(item.sizeLabel))…",
+            extraArgs: item.downloadArgs
+        )
+    }
+
+    func downloadAllRecommendedModels() {
+        runDownload(
+            label: "Downloading all recommended models (Whisper Turbo, Sortformer, Sherpa, Qwen3.5 4B & Dictation)…",
             extraArgs: [
                 "--download-models",
                 "--asr-backend", "mlx",
                 "--model-size", "turbo",
-                "--diarizer", "sherpa-onnx",
+                "--diarizer", "auto",
                 "--llm-repair",
                 "--include-dictation",
             ]
@@ -117,12 +172,12 @@ final class ModelInventoryViewModel: ObservableObject {
 
     func downloadCoreAndSummaryModels() {
         runDownload(
-            label: "Downloading Whisper Turbo, Sherpa-ONNX & Qwen3 4B (~3.9 GB)…",
+            label: "Downloading Whisper Turbo, Sortformer v2.1, Sherpa-ONNX & Qwen3.5 4B…",
             extraArgs: [
                 "--download-models",
                 "--asr-backend", "mlx",
                 "--model-size", "turbo",
-                "--diarizer", "sherpa-onnx",
+                "--diarizer", "auto",
                 "--llm-repair",
             ]
         )
@@ -266,15 +321,21 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Text(item.isDownloaded ? "Downloaded" : "Not Downloaded")
-                                .font(.caption.weight(.medium))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(
-                                    (item.isDownloaded ? Color.green : Color.secondary).opacity(0.14),
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(item.isDownloaded ? Color.green : Color.secondary)
+                            if item.isDownloaded {
+                                Text("Downloaded")
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.14), in: Capsule())
+                                    .foregroundStyle(.green)
+                            } else {
+                                Button("Download") {
+                                    inventory.downloadSingleModel(item)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                                .disabled(inventory.isDownloading)
+                            }
                         }
                     }
                 }
@@ -304,22 +365,25 @@ struct SettingsView: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    Button(inventory.allDownloaded ? "All Models Downloaded" : "Download All Models") {
-                        inventory.downloadAllModels()
+                    Button(inventory.allRecommendedDownloaded ? "All Recommended Ready" : "Download All Recommended") {
+                        inventory.downloadAllRecommendedModels()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(inventory.isDownloading || inventory.allDownloaded)
+                    .controlSize(.small)
+                    .disabled(inventory.isDownloading || inventory.allRecommendedDownloaded)
 
-                    Button("Core + Summary") {
+                    Button("Recommended Core + Summary") {
                         inventory.downloadCoreAndSummaryModels()
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(inventory.isDownloading)
 
                     Button("Dictation Only") {
                         inventory.downloadDictationModels()
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(inventory.isDownloading)
 
                     Spacer()
@@ -328,6 +392,7 @@ struct SettingsView: View {
                         inventory.revealModelsFolder()
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
             .padding(8)

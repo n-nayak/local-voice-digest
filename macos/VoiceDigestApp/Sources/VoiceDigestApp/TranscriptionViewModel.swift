@@ -199,24 +199,29 @@ final class TranscriptionViewModel: ObservableObject {
                 let wantLLMRepair = await self.enableLLMRepair
                 let wantSummary = await self.publishSummary
                 let wantLLM = wantLLMRepair || wantSummary
+                let spkCount = await self.speakers
+                let effectiveDiarizer = spkCount <= 4 ? "sortformer" : "sherpa-onnx"
                 let needsDownload = self.needsModelDownload(
                     modelDir: backend.modelDir,
                     size: await self.modelSize,
+                    diarizer: effectiveDiarizer,
+                    includeDiarizer: spkCount >= 2,
                     includeLLM: wantLLM
                 )
                 if needsDownload {
                     await MainActor.run {
                         self.stageLabel = "First-time setup: downloading AI models"
+                        let diarName = effectiveDiarizer == "sortformer" ? "NVIDIA Sortformer v2.1" : "Sherpa-ONNX"
                         self.detailLabel = wantLLM
-                            ? "Downloading Whisper (\(self.modelSize.rawValue)), English speaker & Qwen3 4B models"
-                            : "Downloading Whisper (\(self.modelSize.rawValue)) & English speaker models"
+                            ? "Downloading Whisper (\(self.modelSize.rawValue)), \(diarName) & Qwen3.5 4B models"
+                            : "Downloading Whisper (\(self.modelSize.rawValue)) & \(diarName) models"
                         self.progress = 3.0
                     }
                     var dlArgs = backend.baseArgs + [
                         "--download-models",
                         "--asr-backend", "mlx",
                         "--model-size", await self.modelSize.rawValue,
-                        "--diarizer", "sherpa-onnx",
+                        "--diarizer", effectiveDiarizer,
                         "--model-dir", backend.modelDir.path
                     ]
                     if wantLLM {
@@ -228,10 +233,10 @@ final class TranscriptionViewModel: ObservableObject {
                 // Step 1: Run offline transcription
                 var args = backend.baseArgs + [
                     inputURL.path,
-                    "--speakers", "\(await self.speakers)",
+                    "--speakers", "\(spkCount)",
                     "--asr-backend", "mlx",
                     "--model-size", await self.modelSize.rawValue,
-                    "--diarizer", "sherpa-onnx",
+                    "--diarizer", effectiveDiarizer,
                     "--model-dir", backend.modelDir.path,
                     "--output", outputFileURL.path,
                     "--json-progress"
@@ -306,17 +311,32 @@ final class TranscriptionViewModel: ObservableObject {
 
     // MARK: - Helpers
 
-    private nonisolated func needsModelDownload(modelDir: URL, size: WhisperModelSize, includeLLM: Bool) -> Bool {
+    private nonisolated func needsModelDownload(
+        modelDir: URL,
+        size: WhisperModelSize,
+        diarizer: String,
+        includeDiarizer: Bool,
+        includeLLM: Bool
+    ) -> Bool {
         let fm = FileManager.default
         let mlxDir = modelDir.appendingPathComponent("whisper-mlx/\(size.rawValue)")
-        let segFile = modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx")
-        let embFile = modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx")
-        let llmDir = modelDir.appendingPathComponent("llm/qwen3-4b-instruct-4bit")
-
         let hasMLX = (try? fm.contentsOfDirectory(atPath: mlxDir.path).isEmpty == false) ?? false
-        let hasSherpa = fm.fileExists(atPath: segFile.path) && fm.fileExists(atPath: embFile.path)
+
+        let hasDiarizer: Bool
+        if !includeDiarizer {
+            hasDiarizer = true
+        } else if diarizer == "sortformer" {
+            let sfDir = modelDir.appendingPathComponent("sortformer/sortformer-4spk-v2.1")
+            hasDiarizer = (try? fm.contentsOfDirectory(atPath: sfDir.path).isEmpty == false) ?? false
+        } else {
+            let segFile = modelDir.appendingPathComponent("sherpa-onnx/segmentation.onnx")
+            let embFile = modelDir.appendingPathComponent("sherpa-onnx/embedding_en_voxceleb.onnx")
+            hasDiarizer = fm.fileExists(atPath: segFile.path) && fm.fileExists(atPath: embFile.path)
+        }
+
+        let llmDir = modelDir.appendingPathComponent("llm/qwen3.5-4b-mlx-4bit")
         let hasLLM = !includeLLM || ((try? fm.contentsOfDirectory(atPath: llmDir.path).isEmpty == false) ?? false)
-        return !(hasMLX && hasSherpa && hasLLM)
+        return !(hasMLX && hasDiarizer && hasLLM)
     }
 
     private nonisolated func runSubprocess(backend: BackendCommand, args: [String]) async throws {

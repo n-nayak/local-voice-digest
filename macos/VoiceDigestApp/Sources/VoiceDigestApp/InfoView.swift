@@ -86,12 +86,12 @@ struct InfoView: View {
                 "Many phone, Zoom, and laptop recordings are very quiet (-40 dBFS), which makes speech and speaker detection less reliable. EBU R128 normalization boosts speech to a consistent level without amplifying silence. Recommended target: -16 LUFS for calls/podcasts (-14 LUFS louder, -20 LUFS softer)."
             )
             infoBullet(
-                "AI Speaker Repair (Local Qwen3 4B):",
-                "Acoustic diarization alone can confuse short back-and-forth exchanges (like greetings or quick Q&A). Enabling this runs a local 4B LLM (Qwen3-4B-Instruct 4-bit, ~2.3 GB on disk, ~3 GB GPU RAM) strictly offline to reassign speaker labels using conversational logic—without altering a single transcribed word or timestamp."
+                "AI Speaker Repair (Local Qwen3.5 4B):",
+                "Acoustic diarization alone can confuse short back-and-forth exchanges (like greetings or quick Q&A). Enabling this runs a local 4B LLM (Qwen3.5-4B-MLX-4bit, ~2.9 GB on disk, ~4 GB GPU RAM) strictly offline to reassign speaker labels using conversational logic—without altering a single transcribed word or timestamp."
             )
             infoBullet(
-                "Publish AI Summary (Local Qwen3 4B):",
-                "Generates a concise AI summary at the top of your transcript file (=== AI SUMMARY ===) using the same local Qwen3 4B model. Optionally enter up to 160 characters to guide the focus (e.g., 'Action items and TODOs', 'Key podcast insights', or 'Rate the interview'). Long recordings (1–3+ hours) are automatically summarized via map-reduce chunking so they never overflow the context window."
+                "Publish AI Summary (Local Qwen3.5 4B):",
+                "Generates a concise AI summary at the top of your transcript file (=== AI SUMMARY ===) using the same local Qwen3.5 4B model. Optionally enter up to 160 characters to guide the focus (e.g., 'Action items and TODOs', 'Key podcast insights', or 'Rate the interview'). Long recordings (1–3+ hours) are automatically summarized via map-reduce chunking so they never overflow the context window."
             )
             infoBullet(
                 "System-Wide Dictation (Parakeet v3 + Qwen3 1.7B):",
@@ -156,9 +156,10 @@ struct InfoView: View {
                 modelRow("Medium", "~1.5 GB", "~1.8 GB", "Strong accuracy on accents/jargon")
                 modelRow("Turbo", "~1.6 GB", "~2.0 GB", "Recommended — fast + near large-v3 quality")
                 modelRow("Large v3", "~3.0 GB", "~3.5 GB", "Highest accuracy, slowest")
+                modelRow("Sortformer v2.1", "~450 MB", "~0.9 GB", "Speaker separation (2–4 speakers, MLX GPU)")
                 modelRow("Parakeet v3", "~1.2 GB", "~1.4 GB", "System-wide dictation (<500 ms)")
                 modelRow("Qwen3 1.7B", "~1.0 GB", "~1.3 GB", "Fast dictation cleanup (fillers/edits)")
-                modelRow("Qwen3 4B", "~2.3 GB", "~3.0 GB", "Meeting speaker repair & AI summaries")
+                modelRow("Qwen3.5 4B", "~2.9 GB", "~4.0 GB", "Meeting speaker repair & AI summaries")
             }
             .padding(10)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -189,12 +190,12 @@ struct InfoView: View {
                 "ASR stands for Automatic Speech Recognition: converting spoken audio into text and word-level timestamps. We use Apple's open-source MLX framework to run OpenAI's open-weight Whisper models natively on the Apple Silicon Metal GPU, which is 5–10× faster and cooler than running Whisper on CPU."
             )
             infoBullet(
-                "3. Speaker Diarization — Sherpa-ONNX (pyannote + English WeSpeaker VoxCeleb):",
-                "Diarization (literally 'diary-zation'—logging who spoke when) splits audio into speech segments, computes an English VoxCeleb voiceprint per segment using WeSpeaker ResNet34-LM, clusters them into N speakers, and applies sentence-boundary majority smoothing so sentences are never torn mid-clause across two speakers (~32 MB total, zero HF token)."
+                "3. Speaker Diarization — NVIDIA Sortformer v2.1 (2–4 Speakers) & Sherpa-ONNX (5+ Speakers):",
+                "For 2–4 speaker files, VoiceDigest runs NVIDIA's end-to-end Sortformer v2.1 natively on Apple Silicon GPU via mlx-audio (zero HF token, no fragile clustering step). When you select 5+ speakers, it automatically switches to Sherpa-ONNX (pyannote-segmentation-3.0 + English WeSpeaker VoxCeleb ResNet34-LM, ~32 MB). Both apply sentence-boundary majority smoothing so sentences are never torn mid-clause."
             )
             infoBullet(
-                "4. Optional Semantic Speaker Repair & Summaries — Local MLX LLM (Qwen3-4B-Instruct 4-bit):",
-                "When enabled, runs a 4-bit quantized Qwen3 4B language model (non-thinking mode) natively on your Apple Silicon GPU via mlx-lm. For speaker repair it outputs only corrected speaker IDs (JSON) while preserving every word and timestamp verbatim; for summaries it automatically map-reduces 1–3+ hour calls."
+                "4. Optional Semantic Speaker Repair & Summaries — Local MLX LLM (Qwen3.5-4B-MLX-4bit):",
+                "When enabled, runs a 4-bit quantized Qwen3.5 4B language model (non-thinking mode) natively on your Apple Silicon GPU via mlx-lm. For speaker repair it outputs only corrected speaker IDs (JSON) while preserving every word and timestamp verbatim; for summaries it automatically map-reduces 1–3+ hour calls."
             )
             infoBullet(
                 "5. System-Wide Dictation — Parakeet TDT 0.6B v3 + Qwen3-1.7B 4-bit:",

@@ -41,7 +41,7 @@ Most local transcription tools stop at plain text — or require setting up Olla
 - **<500 ms System-Wide Dictation (Wispr Flow–Style, 100% On-Device):** Hold your chosen modifier hotkey (`Right Option ⌥`, `⌃⌥`, `Right ⌥⌘`, `Right ⌘`, or `Fn`) in any Mac app, see live streaming preview text in the floating bubble, and release to auto-paste polished text (or enable optional auto-paste chunks on pauses / end of sentence; press `Esc` to cancel). Powered by a warm local **Parakeet TDT 0.6B v3** + **Qwen3-1.7B-4bit** daemon with active window context, Personal Dictionary, and clipboard preservation.
 - **Acoustic & Prosody Biomarkers (`--prosody`):** Measures speaking pace (WPM), mid-clause hesitation blocks, prolongations, and speaker-normalized vocal stress (`openSMILE` eGeMAPS + DSP) — built for interview prep, sales calls, and communication coaching.
 - **Native Menu-Bar Live Call Capture (macOS 14.2+):** Captures your mic (`Me`) and system audio (`Other` / `1:N`) natively via **Core Audio Process Tap** — no meeting bots, no BlackHole driver, and no *Screen Recording* permission required.
-- **All-in-One Apple Silicon MLX Stack:** Runs `mlx-whisper` (Metal GPU), `parakeet-mlx` (ultra-fast dictation), `sherpa-onnx` (English WeSpeaker VoxCeleb diarization), and `Qwen3-4B-Instruct-2507-4bit` (`mlx-lm` speaker-swap repair + map-reduce summarization, non-thinking mode) directly inside one `.app` with automatic public model downloads (zero login or tokens).
+- **All-in-One Apple Silicon MLX Stack:** Runs `mlx-whisper` (Metal GPU), `parakeet-mlx` (ultra-fast dictation), **NVIDIA Sortformer v2.1** (`mlx-audio` end-to-end neural diarization for 2–4 speakers, auto-switching to `sherpa-onnx` for 5+ speakers), and **`Qwen3.5-4B-MLX-4bit`** (`mlx-lm` speaker-swap repair + map-reduce summarization) directly inside one `.app` with automatic public model downloads (zero login or tokens).
 - **Strict Air-Gap Enforcement:** Sets `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` before ML imports and installs a Python socket-level outbound network blocker during inference.
 - **Broad Audio & Video Support:** Decodes `.m4a`, `.mp3`, `.wav`, `.ogg`/`.opus`, `.flac`, `.aac`, `.aiff`, `.caf`, `.wma`, and extracts audio tracks from `.mp4`, `.mov`, `.mkv`, and `.webm` via bundled `ffmpeg` with configurable EBU R128 loudness normalization (`-24` to `-10 LUFS`).
 
@@ -93,8 +93,8 @@ uv pip install -e ".[prosody,mlx]"
 
 ### 3. One-Time Model Download (No HF Token Required)
 ```bash
-# Transcription, diarization & meeting LLM (Qwen3-4B)
-python transcribe.py --download-models --asr-backend mlx --model-size turbo --diarizer sherpa-onnx --llm-repair --model-dir ./models
+# Transcription, diarization (Sortformer v2.1 + Sherpa-ONNX) & meeting LLM (Qwen3.5-4B)
+python transcribe.py --download-models --asr-backend mlx --model-size turbo --diarizer auto --llm-repair --model-dir ./models
 
 # Optional: System-wide dictation models (Parakeet v3 + Qwen3-1.7B)
 python transcribe.py --download-models --dictation-models --model-dir ./models
@@ -106,7 +106,7 @@ python transcribe.py recording.m4a \
   --speakers 2 \
   --asr-backend mlx \
   --model-size turbo \
-  --diarizer sherpa-onnx \
+  --diarizer auto \
   --language en \
   --llm-repair \
   --summary --summary-focus "Key takeaways, decisions, and action items" \

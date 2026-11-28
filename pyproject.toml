@@ -33,6 +33,7 @@ sherpa = [
 mlx = [
     "mlx-whisper>=0.4.0",
     "mlx-lm>=0.20.0",
+    "mlx-audio>=0.2.0",
     "parakeet-mlx>=0.3.0",
     "sherpa-onnx>=1.10.0",
 ]
@@ -47,6 +48,7 @@ all = [
     "sherpa-onnx>=1.10.0",
     "mlx-whisper>=0.4.0",
     "mlx-lm>=0.20.0",
+    "mlx-audio>=0.2.0",
     "parakeet-mlx>=0.3.0",
     "pytest>=8.0.0",
 ]

@@ -43,8 +43,12 @@ SHERPA_EMB_URL = (
 )
 SHERPA_EMB_FILENAME = "embedding_en_voxceleb.onnx"
 
-LLM_REPAIR_REPO_ID = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
-LLM_REPAIR_DIRNAME = "qwen3-4b-instruct-4bit"
+SORTFORMER_REPO_ID = "mlx-community/diar_streaming_sortformer_4spk-v2.1-fp32"
+SORTFORMER_DIRNAME = "sortformer-4spk-v2.1"
+SORTFORMER_MAX_SPEAKERS = 4
+
+LLM_REPAIR_REPO_ID = "mlx-community/Qwen3.5-4B-MLX-4bit"
+LLM_REPAIR_DIRNAME = "qwen3.5-4b-mlx-4bit"
 
 DICTATION_ASR_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
 DICTATION_ASR_DIRNAME = "parakeet-tdt-0.6b-v3"
@@ -160,6 +164,14 @@ def is_parakeet_available() -> bool:
     return importlib.util.find_spec("parakeet_mlx") is not None
 
 
+def is_sortformer_available() -> bool:
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return False
+    import importlib.util
+
+    return importlib.util.find_spec("mlx_audio") is not None
+
+
 def pyannote_model_path(model_dir: Path) -> Path:
     return model_dir / "pyannote"
 
@@ -170,6 +182,10 @@ def ser_model_path(model_dir: Path) -> Path:
 
 def sherpa_model_path(model_dir: Path) -> Path:
     return model_dir / "sherpa-onnx"
+
+
+def sortformer_model_path(model_dir: Path) -> Path:
+    return model_dir / "sortformer" / SORTFORMER_DIRNAME
 
 
 def llm_repair_model_path(model_dir: Path) -> Path:
@@ -254,6 +270,12 @@ def download_all_models(
         _download_pyannote_model(root, token)
     elif diarizer == "sherpa-onnx":
         _download_sherpa_onnx_models(root)
+    elif diarizer == "sortformer":
+        _download_sortformer_model(root)
+    elif diarizer == "auto":
+        if is_sortformer_available():
+            _download_sortformer_model(root)
+        _download_sherpa_onnx_models(root)
     else:
         raise ValueError(f"Unsupported diarizer: {diarizer}")
 
@@ -287,6 +309,22 @@ def _download_llm_repair_model(model_dir: Path) -> Path:
     target = llm_repair_model_path(model_dir)
     target.mkdir(parents=True, exist_ok=True)
     snapshot_download(repo_id=LLM_REPAIR_REPO_ID, local_dir=str(target))
+    return target
+
+
+def _download_sortformer_model(model_dir: Path) -> Path:
+    """Download NVIDIA Sortformer v2.1 MLX weights (100% public, zero HF token)."""
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError(
+            "huggingface-hub is not installed. Run 'pip install -r requirements.txt' first."
+        ) from exc
+
+    target = sortformer_model_path(model_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    print(f"  - Downloading NVIDIA Sortformer v2.1 MLX ({SORTFORMER_REPO_ID})...")
+    snapshot_download(repo_id=SORTFORMER_REPO_ID, local_dir=str(target))
     return target
 
 

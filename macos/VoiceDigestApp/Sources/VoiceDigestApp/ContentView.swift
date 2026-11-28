@@ -170,6 +170,25 @@ struct ContentView: View {
                         .disabled(vm.isRunning)
                 }
 
+                if vm.speakers >= 2 {
+                    HStack(spacing: 6) {
+                        Image(systemName: vm.speakers <= 4 ? "cpu" : "arrow.triangle.branch")
+                            .font(.caption)
+                            .foregroundStyle(vm.speakers <= 4 ? Color.accentColor : Color.orange)
+                        Text(vm.speakers <= 4
+                             ? "Speaker Engine: NVIDIA Sortformer v2.1 (MLX GPU · up to 4 speakers)"
+                             : "Speaker Engine: Sherpa-ONNX (auto-switched for 5+ speakers)")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(vm.speakers <= 4 ? Color.secondary : Color.orange)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        (vm.speakers <= 4 ? Color.accentColor : Color.orange).opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                }
+
                 Divider()
 
                 Toggle("Loudness Normalization (recommended for quiet calls)", isOn: $vm.normalizeLoudness)
@@ -190,10 +209,10 @@ struct ContentView: View {
                     .padding(.leading, 20)
                 }
 
-                Toggle("AI Speaker Repair (Local Qwen3 4B — fixes speaker swaps)", isOn: $vm.enableLLMRepair)
+                Toggle("AI Speaker Repair (Local Qwen3.5 4B — fixes speaker swaps)", isOn: $vm.enableLLMRepair)
                     .disabled(vm.isRunning || vm.speakers < 2)
 
-                Toggle("Publish AI Summary (Local Qwen3 4B — prepends summary to .txt)", isOn: $vm.publishSummary)
+                Toggle("Publish AI Summary (Local Qwen3.5 4B — prepends summary to .txt)", isOn: $vm.publishSummary)
                     .disabled(vm.isRunning)
 
                 if vm.publishSummary {
@@ -472,12 +491,31 @@ struct ContentView: View {
                         Spacer()
                     }
 
+                    if liveVM.remoteSpeakers >= 2 {
+                        HStack(spacing: 6) {
+                            Image(systemName: liveVM.remoteSpeakers <= 4 ? "cpu" : "arrow.triangle.branch")
+                                .font(.caption)
+                                .foregroundStyle(liveVM.remoteSpeakers <= 4 ? Color.accentColor : Color.orange)
+                            Text(liveVM.remoteSpeakers <= 4
+                                 ? "Remote Diarizer: NVIDIA Sortformer v2.1 (MLX GPU)"
+                                 : "Remote Diarizer: Sherpa-ONNX (auto-switched for 5+ remote speakers)")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(liveVM.remoteSpeakers <= 4 ? Color.secondary : Color.orange)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            (liveVM.remoteSpeakers <= 4 ? Color.accentColor : Color.orange).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                    }
+
                     Divider()
 
                     Toggle("Post-call Acoustic & Prosody Analysis (DSP)", isOn: $liveVM.enableProsody)
                         .disabled(liveVM.isRecording)
 
-                    Toggle("Post-call AI Summary (Local Qwen3 4B)", isOn: $liveVM.publishSummary)
+                    Toggle("Post-call AI Summary (Local Qwen3.5 4B)", isOn: $liveVM.publishSummary)
                         .disabled(liveVM.isRecording)
 
                     if liveVM.publishSummary {
